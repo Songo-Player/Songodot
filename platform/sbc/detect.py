@@ -42,7 +42,8 @@ def configure(env):
 
         if is_cross:
             print("🔧 Setuping cross-compilation environment for ARM64 with LLVM...")
-            sysroot_path = "/srv/chroot/ubuntu-arm64"
+            #sysroot_path = "/srv/chroot/ubuntu-arm64"
+            sysroot_path = os.environ.get("SYSROOT_PATH", os.path.expanduser("~/arm64-sysroot"))
             target_triplet = "aarch64-linux-gnu"
 
             if env.get("use_llvm", False):
@@ -50,6 +51,11 @@ def configure(env):
                 env["CXX"] = "clang++"
                 env["LD"] = "clang++"
                 env["LINK"] = "clang++"
+                # new
+                env["AR"] = f"{target_triplet}-ar"
+                env["RANLIB"] = f"{target_triplet}-ranlib"
+                env["STRIP"] = f"{target_triplet}-strip"
+                env["AS"] = f"{target_triplet}-as"
             else:
                 env["CC"] = f"{target_triplet}-gcc"
                 env["CXX"] = f"{target_triplet}-g++"
@@ -119,6 +125,24 @@ def configure(env):
             env.ParseConfig("pkg-config --cflags --libs sdl2")
 
     env.Append(LIBS=["pthread", "dl", "z"])
+    
+    ffmpeg_module_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                                       "modules", "ffmpeg_audio", "thirdparty", "ffmpeg")
+    
+    if arch == "arm64" and is_cross:
+        ffmpeg_lib_dir = os.path.join(ffmpeg_module_path, "lib")  # or your cross-compiled libs path
+    else:
+        ffmpeg_lib_dir = os.path.join(ffmpeg_module_path, "lib")
+
+    print(f"==> FFmpeg lib path: {ffmpeg_lib_dir}")
+    
+    if os.path.isdir(ffmpeg_lib_dir):
+        print(f"✅ FFmpeg found at: {ffmpeg_lib_dir}")
+        env.Append(LIBPATH=[ffmpeg_lib_dir])  # use LIBPATH not LINKFLAGS for -L
+        env.Append(LIBS=["avcodec", "avformat", "avutil", "swresample"])
+        env.Append(LINKFLAGS=[f"-Wl,-rpath,{ffmpeg_lib_dir}"])
+    else:
+        print(f"❌ FFmpeg not found at: {ffmpeg_lib_dir}")
 
     if env.get("vulkan"):
         env.Append(CPPDEFINES=["VULKAN_ENABLED", "RD_ENABLED"])
