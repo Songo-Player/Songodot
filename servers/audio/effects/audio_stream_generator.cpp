@@ -137,7 +137,8 @@ int AudioStreamGeneratorPlayback::get_skips() const {
 }
 
 void AudioStreamGeneratorPlayback::clear_buffer() {
-	ERR_FAIL_COND(active);
+	// This is just noise when used with seeking on the generated playback
+	// ERR_FAIL_COND(active);
 	buffer.clear();
 	mixed = 0;
 }

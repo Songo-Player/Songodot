@@ -42,13 +42,28 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 	}
 
 	ShowControllerInfo();
+
+	// For KMSDRM, override to native panel resolution so the Vulkan surface
+	// covers the full display. Godot's stretch mode scales the 640x480
+	// project viewport up to fill it — same as OpenGL does automatically.
+	// Panel is physically portrait (1080x1920) but we present landscape,
+	// so we swap to 1920x1080 here and let the Vulkan surface handle the rotation.
+	Size2i native_resolution = p_resolution;
+	const char *video_driver = SDL_GetCurrentVideoDriver();
+	bool is_kmsdrm = video_driver && !strcmp(video_driver, "KMSDRM");
+	if (is_kmsdrm) {
+		native_resolution = Size2i(1080, 1920);
+		print_line("KMSDRM: overriding resolution to " 
+			+ itos(native_resolution.width) + "x" + itos(native_resolution.height));
+	}
+
 	int flags = SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI;
 
 	inputHandler = Input::get_singleton();
 
 #ifdef VULKAN_ENABLED
 	if (rendering_driver == "vulkan") {
-		print_line("resolution: ", p_resolution.width, "x", p_resolution.height);
+		print_line("resolution: ", native_resolution.width, "x", native_resolution.height);
 		vulkan_context = memnew(RenderingContextDriverVulkanSDL);
 		if (!vulkan_context) {
 			printf("Vulkan context is null!\n");
@@ -61,9 +76,7 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 #ifdef GLES3_ENABLED
 			print_line("Switching to GLES3 rendering driver due to Vulkan initialization failure.");
 			rendering_driver = "opengl3";
-			//OS::get_singleton()->set_current_rendering_method("gl_compatibility");
-			//OS::get_singleton()->set_current_rendering_driver_name(rendering_driver);
-#endif // GLES3_ENABLED
+#endif
 		} else {
 			print_line("Using Vulkan rendering driver.");
 			flags |= SDL_WINDOW_VULKAN;
@@ -89,11 +102,12 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 			"Godot",
 			SDL_WINDOWPOS_UNDEFINED,
 			SDL_WINDOWPOS_UNDEFINED,
-			p_resolution.width,
-			p_resolution.height,
+			native_resolution.width,
+			native_resolution.height,
 			flags);
 
-	window_size = p_resolution;
+
+	window_size = native_resolution;
 	print_line("Window created with size: " + itos(window_size.width) + "x" + itos(window_size.height));
 	print_line("SDL_Window created: " + itos((uintptr_t)window));
 
@@ -104,13 +118,11 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 
 #ifdef VULKAN_ENABLED
 	if (rendering_driver == "vulkan") {
-		print_line("resolution: ", p_resolution.width, "x", p_resolution.height);
+		print_line("resolution: ", native_resolution.width, "x", native_resolution.height);
 
 		RenderingContextDriverVulkanSDL::WindowPlatformData wpd;
 		wpd.window = window;
 		vulkan_context->window_create(DisplayServer::MAIN_WINDOW_ID, &wpd);
-
-		//print_line("Vulkan surface ID: " + itos(vulkan_surface_id));
 
 		print_line("Creating RenderingDevice...");
 		rendering_device = memnew(RenderingDevice);
@@ -118,7 +130,6 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 		Error err = rendering_device->initialize(vulkan_context, MAIN_WINDOW_ID);
 		print_line("Errors of initialize: " + itos((int)err));
 		if (err != OK) {
-			// Resource cleanup here...
 			memdelete(rendering_device);
 			print_line("Failed to initialize rendering device: rendering_device=" + itos((uintptr_t)rendering_device));
 			print_line("Error initializing rendering device: " + itos((int)err));
@@ -135,16 +146,13 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 	if (rendering_driver == "opengl3") {
 		if (gl_context == nullptr) {
 			gl_context = SDL_GL_CreateContext(window);
-
 			if (!gl_context) {
 				print_line("DisplayServerSDL: Failed to create OpenGL ES context: " + String(SDL_GetError()));
 				ERR_FAIL_MSG("Failed to create OpenGL context: " + String(SDL_GetError()));
 			}
 			print_line("OpenGL ES context created");
-
 			SDL_GL_MakeCurrent(window, gl_context);
-
-			SDL_GL_SetSwapInterval(get_sdl_swap_interval(p_vsync)); // Enable VSync
+			SDL_GL_SetSwapInterval(get_sdl_swap_interval(p_vsync));
 			print_line("VSync set to ", (get_sdl_swap_interval(p_vsync) ? "enabled" : "disabled"));
 			RasterizerGLES3::make_current(false);
 			print_line("Rasterizer initialized");
@@ -658,6 +666,7 @@ void DisplayServerSDL::process_events() {
 			case SDL_FINGERUP:
 			case SDL_FINGERMOTION:
 				_process_sdl_touch_event(event);
+				break;
 			case SDL_QUIT:
 				OS_SBC::get_singleton()->set_quit_requested(true);
 				break;

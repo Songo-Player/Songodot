@@ -36,6 +36,17 @@ void OS_SBC::run() {
 	main_loop->initialize();
 	print_line("Main loop initialized successfully");
 
+	// Rotate viewport 90 degrees for KMSDRM portrait panel
+    //const char *video_driver = SDL_GetCurrentVideoDriver();
+
+	//if (video_driver && !strcmp(video_driver, "KMSDRM")) {
+   	//	RID vp = RenderingServer::get_singleton()->viewport_find_from_screen_attachment(DisplayServer::MAIN_WINDOW_ID);
+	//	if (vp.is_valid()) {
+	//		RenderingServer::get_singleton()->viewport_set_global_canvas_transform(
+	//			vp, Transform2D(-Math_PI / 2.0, Vector2(1, 1), 0.0, Vector2(0, 1920)));
+	//	}
+	//}
+
 	while (!quit_requested) {
 		DisplayServerSDL::get_singleton()->process_events();
 

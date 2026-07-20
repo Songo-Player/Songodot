@@ -68,37 +68,21 @@ void FFMPEGAudio::_notification(int p_what) {
     }
 }
 
-
 void FFMPEGAudio::play(String path, double seek_time) {
-
     if (playing) {
         stop();
     }
+
     current_path = path;
-    player->play();
     frames_played = 0;
-
-    playback = player->get_stream_playback();
-
     playing = true;
 
+    // Open format context
     format_ctx = avformat_alloc_context();
-
-    format_ctx->probesize = 16*1024; // 32 KB is usually plenty to identify an audio stream
-    format_ctx->max_analyze_duration = 0; 
-    format_ctx->flags |= AVFMT_FLAG_FAST_SEEK;
-    format_ctx->flags |= AVFMT_FLAG_NOBUFFER;
-
-    AVDictionary *opts = nullptr;
-    av_dict_set(&opts, "novideo", "1", 0);
-
-    if (avformat_open_input(&format_ctx, path.utf8().get_data(), nullptr, &opts) < 0) {
+    if (avformat_open_input(&format_ctx, path.utf8().get_data(), nullptr, nullptr) < 0) {
         print_line("Failed to open file");
-        av_dict_free(&opts);
         return;
     }
-    av_dict_free(&opts);
-
     avformat_find_stream_info(format_ctx, nullptr);
 
     // Find audio stream
@@ -108,48 +92,40 @@ void FFMPEGAudio::play(String path, double seek_time) {
             break;
         }
     }
-
     if (audio_stream_index == -1) {
         print_line("No audio stream found");
         return;
     }
 
+    // Set up codec
     AVCodecParameters *codecpar = format_ctx->streams[audio_stream_index]->codecpar;
     const AVCodec *codec = avcodec_find_decoder(codecpar->codec_id);
-
     codec_ctx = avcodec_alloc_context3(codec);
-    codec_ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
     avcodec_parameters_to_context(codec_ctx, codecpar);
     avcodec_open2(codec_ctx, codec, nullptr);
 
+    // Set up resampler to stereo float 44100
     AVChannelLayout out_layout;
     av_channel_layout_default(&out_layout, 2);
-
-    AVChannelLayout in_layout = codec_ctx->ch_layout;
-
     swr_alloc_set_opts2(
         &swr,
-        &out_layout,
-        AV_SAMPLE_FMT_FLT,
-        44100,
-        &in_layout,
-        codec_ctx->sample_fmt,
-        codec_ctx->sample_rate,
-        0,
-        nullptr
+        &out_layout,    AV_SAMPLE_FMT_FLT, 44100,
+        &codec_ctx->ch_layout, codec_ctx->sample_fmt, codec_ctx->sample_rate,
+        0, nullptr
     );
-
     swr_init(swr);
 
-    // Optional seek
+    // Seek if requested
     if (seek_time > 0.0) {
-        int64_t ts = seek_time * AV_TIME_BASE;
+        int64_t ts = (int64_t)(seek_time * AV_TIME_BASE);
         av_seek_frame(format_ctx, -1, ts, AVSEEK_FLAG_BACKWARD);
+        avcodec_flush_buffers(codec_ctx);
     }
 
+    player->play();
+    playback = player->get_stream_playback();
     decode_thread.start(_decode_thread_func, this);
 }
-
 
 void FFMPEGAudio::_decode_thread_func(void *p_userdata) {
 

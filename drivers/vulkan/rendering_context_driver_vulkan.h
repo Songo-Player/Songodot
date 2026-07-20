@@ -132,6 +132,9 @@ public:
 	virtual bool surface_get_needs_resize(SurfaceID p_surface) const override;
 	virtual void surface_destroy(SurfaceID p_surface) override;
 	virtual bool is_debug_utils_enabled() const override;
+	VkPhysicalDevice physical_device_get() const { 
+		return physical_devices[0]; 
+	}
 
 	// Vulkan-only methods.
 	struct Surface {
