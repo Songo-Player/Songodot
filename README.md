@@ -1,3 +1,6 @@
+# Songodot
+For Songodot specific documentation check the wiki in this repo
+
 # Godot Engine
 
 <p align="center">
