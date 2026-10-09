@@ -16,6 +16,11 @@ layout(push_constant, std140) uniform Pos {
 	float aspect_ratio;
 	uint layer;
 	uint pad1;
+
+	uint rotation; // Clockwise quarter turns applied when blitting (for rotated panels).
+	uint pad2;
+	uint pad3;
+	uint pad4;
 }
 data;
 
@@ -23,7 +28,7 @@ layout(location = 0) out vec2 uv;
 
 void main() {
 	vec2 base_arr[4] = vec2[](vec2(0.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, 0.0));
-	uv = data.src_rect.xy + base_arr[gl_VertexIndex] * data.src_rect.zw;
+	uv = data.src_rect.xy + base_arr[(gl_VertexIndex + int(data.rotation)) & 3] * data.src_rect.zw;
 	vec2 vtx = data.dst_rect.xy + base_arr[gl_VertexIndex] * data.dst_rect.zw;
 	gl_Position = vec4(vtx * 2.0 - 1.0, 0.0, 1.0);
 }
@@ -46,6 +51,11 @@ layout(push_constant, std140) uniform Pos {
 	float aspect_ratio;
 	uint layer;
 	bool convert_to_srgb;
+
+	uint rotation;
+	uint pad2;
+	uint pad3;
+	uint pad4;
 }
 data;
 

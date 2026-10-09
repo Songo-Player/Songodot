@@ -82,38 +82,95 @@ RenderingContextDriver::SurfaceID RenderingContextDriverVulkanSDL::surface_creat
         }
 
 
-		// Always use mode[0] as base, prefer higher refresh if same resolution
-        VkDisplayModeKHR chosen_mode = modes[0].displayMode;
-        VkExtent2D chosen_extent     = modes[0].parameters.visibleRegion;
+        // Target resolution: the mode the connector is actually running (SDL's
+        // desktop mode), which the DisplayServer also sized the window to.
+        // Vulkan's mode list order isn't guaranteed to put that mode first.
+        uint32_t target_w = 0, target_h = 0;
+        SDL_DisplayMode desktop_mode;
+        if (SDL_GetDesktopDisplayMode(0, &desktop_mode) == 0) {
+            target_w = desktop_mode.w;
+            target_h = desktop_mode.h;
+        }
 
-        for (uint32_t i = 1; i < mode_count; i++) {
-            auto &p = modes[i].parameters;
-            if (p.visibleRegion.width  == chosen_extent.width &&
-                p.visibleRegion.height == chosen_extent.height &&
-                p.refreshRate > modes[0].parameters.refreshRate) {
-                chosen_mode   = modes[i].displayMode;
-                chosen_extent = p.visibleRegion;
-                print_line("KMSDRM: preferring higher refresh mode at index " + itos(i));
+        // Some handheld firmwares patch SDL to report portrait panels rotated to
+        // landscape, so also accept a mode matching the desktop mode's swapped size.
+        int chosen_index = -1;
+        for (int pass = 0; pass < 2 && chosen_index < 0; pass++) {
+            uint32_t want_w = pass == 0 ? target_w : target_h;
+            uint32_t want_h = pass == 0 ? target_h : target_w;
+            for (uint32_t i = 0; i < mode_count; i++) {
+                auto &p = modes[i].parameters;
+                if (p.visibleRegion.width == want_w && p.visibleRegion.height == want_h &&
+                    (chosen_index < 0 || p.refreshRate > modes[chosen_index].parameters.refreshRate)) {
+                    chosen_index = i;
+                }
+            }
+        }
+        if (chosen_index < 0) {
+            // No match (or SDL couldn't tell us): fall back to mode[0], preferring
+            // the highest refresh rate at that resolution.
+            chosen_index = 0;
+            for (uint32_t i = 1; i < mode_count; i++) {
+                auto &p = modes[i].parameters;
+                if (p.visibleRegion.width == modes[0].parameters.visibleRegion.width &&
+                    p.visibleRegion.height == modes[0].parameters.visibleRegion.height &&
+                    p.refreshRate > modes[chosen_index].parameters.refreshRate) {
+                    chosen_index = i;
+                }
+            }
+            WARN_PRINT("KMSDRM: no Vulkan display mode matches the desktop mode "
+                + itos(target_w) + "x" + itos(target_h) + ", falling back to mode " + itos(chosen_index) + ".");
+        }
+
+        VkDisplayModeKHR chosen_mode = modes[chosen_index].displayMode;
+        VkExtent2D chosen_extent     = modes[chosen_index].parameters.visibleRegion;
+
+        print_line("KMSDRM: desktop mode " + itos(target_w) + "x" + itos(target_h)
+            + ", using mode " + itos(chosen_index) + ", extent "
+            + itos(chosen_extent.width) + "x" + itos(chosen_extent.height));
+
+        // --- Scanout rotation ---
+        // Handheld panels are often physically portrait but mounted landscape, so
+        // those get rotated 90 degrees clockwise. Natively landscape panels are left
+        // as-is. SONGODOT_KMSDRM_ROTATION=0|90|180|270 overrides this (e.g. a panel
+        // mounted the other way round needs 270).
+        int quarter_turns = chosen_extent.height > chosen_extent.width ? 1 : 0;
+        const char *rotation_env = getenv("SONGODOT_KMSDRM_ROTATION");
+        if (rotation_env) {
+            int degrees = atoi(rotation_env);
+            if (degrees == 0 || degrees == 90 || degrees == 180 || degrees == 270) {
+                quarter_turns = degrees / 90;
+            } else {
+                WARN_PRINT("KMSDRM: ignoring invalid SONGODOT_KMSDRM_ROTATION=" + String(rotation_env));
             }
         }
 
-        //VkDisplayModeKHR chosen_mode = modes[0].displayMode;
-        //VkExtent2D chosen_extent     = modes[0].parameters.visibleRegion;
-
-        //for (uint32_t i = 0; i < mode_count; i++) {
-        //    auto &p = modes[i].parameters;
-        //    if (p.visibleRegion.width  == 1080 &&
-        //        p.visibleRegion.height == 1920 &&
-        //        p.refreshRate         == 60000) {
-        //        chosen_mode   = modes[i].displayMode;
-        //        chosen_extent = p.visibleRegion;
-        //        print_line("KMSDRM: found 1080x1920@60 mode at index " + itos(i));
-        //        break;
-        //    }
-        //}
-
-        print_line("KMSDRM: using extent "
-            + itos(chosen_extent.width) + "x" + itos(chosen_extent.height));
+        // Rotate in scanout if the display supports it. Otherwise (e.g. Mesa, which
+        // only supports identity) scan out unrotated and have the renderer rotate the
+        // image in its final blit to the screen, laying out at the rotated size.
+        static const VkSurfaceTransformFlagBitsKHR transforms[4] = {
+            VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+            VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR,
+            VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR,
+            VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR,
+        };
+        VkSurfaceTransformFlagBitsKHR transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        kmsdrm_blit_rotation = 0;
+        kmsdrm_extent = Size2i(chosen_extent.width, chosen_extent.height);
+        if (quarter_turns != 0) {
+            if (displays[0].supportedTransforms & transforms[quarter_turns]) {
+                transform = transforms[quarter_turns];
+            } else {
+                kmsdrm_blit_rotation = quarter_turns;
+                if (quarter_turns & 1) {
+                    kmsdrm_extent = Size2i(chosen_extent.height, chosen_extent.width);
+                }
+            }
+        }
+        print_line("KMSDRM: rotation " + itos(quarter_turns * 90) + " degrees ("
+            + (kmsdrm_blit_rotation ? "in renderer blit" : "in scanout") + "), supported transforms 0x"
+            + String::num_int64(displays[0].supportedTransforms, 16)
+            + ", layout size " + itos(kmsdrm_extent.width) + "x" + itos(kmsdrm_extent.height));
 
         // --- Grab plane[0] ---
         uint32_t plane_count = 0;
@@ -130,8 +187,7 @@ RenderingContextDriver::SurfaceID RenderingContextDriverVulkanSDL::surface_creat
         create_info.displayMode     = chosen_mode;
         create_info.planeIndex      = 0;
         create_info.planeStackIndex = planes[0].currentStackIndex;
-        //create_info.transform       = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-		create_info.transform = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR;
+        create_info.transform       = transform;
         create_info.alphaMode       = VK_DISPLAY_PLANE_ALPHA_OPAQUE_BIT_KHR;
         create_info.imageExtent     = chosen_extent;
 

@@ -155,6 +155,13 @@ public:
 	virtual bool has_feature(Feature p_feature) const = 0;
 	virtual String get_name() const = 0;
 
+	// Returns the rendering driver actually in use, which may differ from the one
+	// requested at creation time if the platform silently fell back to another one
+	// (e.g. Vulkan failing over to GLES3) without failing DisplayServer::create().
+	// Empty if the platform doesn't track this separately (i.e. it never falls back
+	// without also failing creation, so the originally requested driver still applies).
+	virtual String get_rendering_driver_name() const { return String(); }
+
 	virtual void help_set_search_callbacks(const Callable &p_search_callback = Callable(), const Callable &p_action_callback = Callable());
 
 #ifndef DISABLE_DEPRECATED

@@ -43,18 +43,27 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 
 	ShowControllerInfo();
 
-	// For KMSDRM, override to native panel resolution so the Vulkan surface
-	// covers the full display. Godot's stretch mode scales the 640x480
-	// project viewport up to fill it — same as OpenGL does automatically.
-	// Panel is physically portrait (1080x1920) but we present landscape,
-	// so we swap to 1920x1080 here and let the Vulkan surface handle the rotation.
+	// For KMSDRM, override to the native display mode so the Vulkan surface
+	// covers the full display. SDL's KMSDRM Vulkan backend sizes the display
+	// plane surface from the window and requires a display mode that fits
+	// inside it, so a window smaller than the panel fails. Godot's stretch mode
+	// scales the project viewport up to fill it — same as OpenGL does automatically.
+	// The desktop mode on KMSDRM is the CRTC's active mode (or the connector's
+	// preferred mode), in the panel's physical orientation (unrotated).
 	Size2i native_resolution = p_resolution;
 	const char *video_driver = SDL_GetCurrentVideoDriver();
 	bool is_kmsdrm = video_driver && !strcmp(video_driver, "KMSDRM");
 	if (is_kmsdrm) {
-		native_resolution = Size2i(1080, 1920);
-		print_line("KMSDRM: overriding resolution to " 
-			+ itos(native_resolution.width) + "x" + itos(native_resolution.height));
+		int display_index = (p_screen >= 0 && p_screen < SDL_GetNumVideoDisplays()) ? p_screen : 0;
+		SDL_DisplayMode mode;
+		if (SDL_GetDesktopDisplayMode(display_index, &mode) == 0 || SDL_GetCurrentDisplayMode(display_index, &mode) == 0) {
+			native_resolution = Size2i(mode.w, mode.h);
+			print_line("KMSDRM: overriding resolution to native display mode "
+					+ itos(native_resolution.width) + "x" + itos(native_resolution.height)
+					+ " on display " + itos(display_index));
+		} else {
+			WARN_PRINT("KMSDRM: could not query display mode (" + String(SDL_GetError()) + "), using requested resolution.");
+		}
 	}
 
 	int flags = SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI;
@@ -113,7 +122,8 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 
 	if (!window) {
 		print_line("Failed to create SDL window: " + String(SDL_GetError()));
-		ERR_FAIL_MSG("Failed to create SDL window: " + String(SDL_GetError()));
+		r_error = ERR_CANT_CREATE;
+		return;
 	}
 
 #ifdef VULKAN_ENABLED
@@ -124,22 +134,75 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 		wpd.window = window;
 		vulkan_context->window_create(DisplayServer::MAIN_WINDOW_ID, &wpd);
 
+		// The KMSDRM surface size (and so the swapchain size) comes from the Vulkan
+		// display mode that was chosen. Make the window match it exactly (swapped if
+		// the renderer has to rotate the output), since Godot lays out the UI to the
+		// window size.
+		RenderingContextDriverVulkanSDL *sdl_vulkan_context = static_cast<RenderingContextDriverVulkanSDL *>(vulkan_context);
+		screen_rotation = sdl_vulkan_context->get_kmsdrm_blit_rotation();
+		RendererCompositorRD::set_screen_rotation(screen_rotation);
+		Size2i surface_extent = sdl_vulkan_context->get_kmsdrm_extent();
+		if (is_kmsdrm && surface_extent.width > 0 && surface_extent.height > 0 && surface_extent != window_size) {
+			print_line("KMSDRM: resizing window from " + itos(window_size.width) + "x" + itos(window_size.height)
+					+ " to match surface " + itos(surface_extent.width) + "x" + itos(surface_extent.height));
+			window_size = surface_extent;
+			SDL_SetWindowSize(window, surface_extent.width, surface_extent.height);
+		}
+
 		print_line("Creating RenderingDevice...");
 		rendering_device = memnew(RenderingDevice);
-		print_line("RenderingDevice pointer: " + itos((uintptr_t)rendering_device));
 		Error err = rendering_device->initialize(vulkan_context, MAIN_WINDOW_ID);
-		print_line("Errors of initialize: " + itos((int)err));
 		if (err != OK) {
+			print_line("Failed to initialize Vulkan rendering device, error: " + itos((int)err));
 			memdelete(rendering_device);
-			print_line("Failed to initialize rendering device: rendering_device=" + itos((uintptr_t)rendering_device));
-			print_line("Error initializing rendering device: " + itos((int)err));
-			ERR_FAIL_MSG("Failed to initialize rendering device: " + itos((int)err));
+			rendering_device = nullptr;
+			vulkan_context->window_destroy(DisplayServer::MAIN_WINDOW_ID);
+			memdelete(vulkan_context);
+			vulkan_context = nullptr;
+
+			// The GLES3 renderer doesn't rotate its output, so neither should touch input.
+			screen_rotation = 0;
+			RendererCompositorRD::set_screen_rotation(0);
+
+#ifdef GLES3_ENABLED
+			WARN_PRINT("Your GPU driver seems not to support the required Vulkan device features, switching to GLES3.");
+			rendering_driver = "opengl3";
+
+			// The window was created for a Vulkan surface. SDL requires the GL attributes
+			// and the SDL_WINDOW_OPENGL flag to be set *before* window creation, so the
+			// window has to be torn down and recreated for the GLES3 fallback to work.
+			SDL_DestroyWindow(window);
+			flags &= ~SDL_WINDOW_VULKAN;
+			flags |= SDL_WINDOW_OPENGL;
+			SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+			SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+			SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+			SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+			SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+			SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+
+			window = SDL_CreateWindow(
+					"Godot",
+					SDL_WINDOWPOS_UNDEFINED,
+					SDL_WINDOWPOS_UNDEFINED,
+					native_resolution.width,
+					native_resolution.height,
+					flags);
+
+			if (!window) {
+				print_line("Failed to create fallback SDL window for GLES3: " + String(SDL_GetError()));
+				r_error = ERR_CANT_CREATE;
+				return;
+			}
+#else
 			r_error = err;
 			return;
+#endif
+		} else {
+			print_line("Rendering device initialized with Vulkan");
+			rendering_device->screen_create(MAIN_WINDOW_ID);
+			RendererCompositorRD::make_current();
 		}
-		print_line("Rendering device initialized with Vulkan");
-		rendering_device->screen_create(MAIN_WINDOW_ID);
-		RendererCompositorRD::make_current();
 	}
 #endif
 #ifdef GLES3_ENABLED
@@ -148,7 +211,8 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 			gl_context = SDL_GL_CreateContext(window);
 			if (!gl_context) {
 				print_line("DisplayServerSDL: Failed to create OpenGL ES context: " + String(SDL_GetError()));
-				ERR_FAIL_MSG("Failed to create OpenGL context: " + String(SDL_GetError()));
+				r_error = ERR_CANT_CREATE;
+				return;
 			}
 			print_line("OpenGL ES context created");
 			SDL_GL_MakeCurrent(window, gl_context);
@@ -159,6 +223,11 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 		}
 	}
 #endif
+
+	// SDL's KMSDRM backend creates a hardware cursor (a DRM cursor plane) for every
+	// non-Vulkan window and shows it at <0, 0> by default. Handhelds have no pointer,
+	// so start hidden; projects can opt back in with Input.mouse_mode = MOUSE_MODE_VISIBLE.
+	mouse_set_mode(MOUSE_MODE_HIDDEN);
 
 	inputHandler->set_event_dispatch_function(&DisplayServerSDL::event_dispatch_function);
 
@@ -813,6 +882,16 @@ void DisplayServerSDL::_process_sdl_key_event(const SDL_KeyboardEvent &key_event
 }
 
 void DisplayServerSDL::_process_sdl_mouse_event(const SDL_Event &event) {
+	// Ignore the mouse events SDL synthesizes from touches: they aren't rotated with
+	// the screen, and Godot already emulates the mouse from the touch events
+	// (input_devices/pointing/emulate_mouse_from_touch).
+	Uint32 mouse_id = event.type == SDL_MOUSEMOTION ? event.motion.which
+			: event.type == SDL_MOUSEWHEEL		  ? event.wheel.which
+												  : event.button.which;
+	if (mouse_id == SDL_TOUCH_MOUSEID) {
+		return;
+	}
+
 	Ref<InputEvent> ie;
 	switch (event.type) {
 		case SDL_MOUSEMOTION: {
@@ -887,42 +966,49 @@ void DisplayServerSDL::_process_sdl_text_input(const SDL_TextInputEvent &text_ev
 	}
 }
 
+// Converts SDL's normalized (0-1) touch coordinates, which are in the panel's native
+// orientation, into window pixels in the (possibly rotated) logical orientation.
+// This undoes the renderer's screen rotation: logical (u, v) is shown at
+// (1 - v, u) for 90 degrees, (1 - u, 1 - v) for 180 and (v, 1 - u) for 270.
+Vector2 DisplayServerSDL::_touch_to_window(float p_x, float p_y, bool p_is_delta) const {
+	Vector2 n;
+	switch (screen_rotation) {
+		case 1:
+			n = p_is_delta ? Vector2(p_y, -p_x) : Vector2(p_y, 1.0 - p_x);
+			break;
+		case 2:
+			n = p_is_delta ? Vector2(-p_x, -p_y) : Vector2(1.0 - p_x, 1.0 - p_y);
+			break;
+		case 3:
+			n = p_is_delta ? Vector2(-p_y, p_x) : Vector2(1.0 - p_y, p_x);
+			break;
+		default:
+			n = Vector2(p_x, p_y);
+			break;
+	}
+	int win_w = 0, win_h = 0;
+	SDL_GetWindowSize(window, &win_w, &win_h);
+	return n * Vector2(win_w, win_h);
+}
+
 void DisplayServerSDL::_process_sdl_touch_event(const SDL_Event &event) {
 	switch (event.type) {
-		case SDL_FINGERDOWN: {
-			Ref<InputEventScreenTouch> touch;
-			touch.instantiate();
-			int win_w = 0, win_h = 0;
-			SDL_GetWindowSize(window, &win_w, &win_h);
-			Vector2 pos(event.tfinger.x * win_w, event.tfinger.y * win_h);
-			touch->set_index(event.tfinger.fingerId);
-			touch->set_position(pos);
-			touch->set_pressed(true);
-			inputHandler->parse_input_event(touch);
-			break;
-		}
+		case SDL_FINGERDOWN:
 		case SDL_FINGERUP: {
 			Ref<InputEventScreenTouch> touch;
 			touch.instantiate();
-			int win_w = 0, win_h = 0;
-			SDL_GetWindowSize(window, &win_w, &win_h);
-			Vector2 pos(event.tfinger.x * win_w, event.tfinger.y * win_h);
 			touch->set_index(event.tfinger.fingerId);
-			touch->set_position(pos);
-			touch->set_pressed(false);
+			touch->set_position(_touch_to_window(event.tfinger.x, event.tfinger.y, false));
+			touch->set_pressed(event.type == SDL_FINGERDOWN);
 			inputHandler->parse_input_event(touch);
 			break;
 		}
 		case SDL_FINGERMOTION: {
 			Ref<InputEventScreenDrag> drag;
 			drag.instantiate();
-			int win_w = 0, win_h = 0;
-			SDL_GetWindowSize(window, &win_w, &win_h);
-			Vector2 pos(event.tfinger.x * win_w, event.tfinger.y * win_h);
-			Vector2 rel(event.tfinger.dx * win_w, event.tfinger.dy * win_h);
 			drag->set_index(event.tfinger.fingerId);
-			drag->set_position(pos);
-			drag->set_relative(rel);
+			drag->set_position(_touch_to_window(event.tfinger.x, event.tfinger.y, false));
+			drag->set_relative(_touch_to_window(event.tfinger.dx, event.tfinger.dy, true));
 			drag->set_pressure(event.tfinger.pressure);
 			inputHandler->parse_input_event(drag);
 			break;
@@ -1164,5 +1250,11 @@ void DisplayServerSDL::mouse_set_mode(MouseMode p_mode) {
 	if (!window) {
 		return;
 	}
+	mouse_mode = p_mode;
 	SDL_SetRelativeMouseMode(p_mode == MOUSE_MODE_CAPTURED ? SDL_TRUE : SDL_FALSE);
+	SDL_ShowCursor((p_mode == MOUSE_MODE_VISIBLE || p_mode == MOUSE_MODE_CONFINED) ? SDL_ENABLE : SDL_DISABLE);
+}
+
+DisplayServer::MouseMode DisplayServerSDL::mouse_get_mode() const {
+	return mouse_mode;
 }

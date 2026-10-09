@@ -5429,7 +5429,16 @@ Vector<String> DisplayServerX11::get_rendering_drivers_func() {
 DisplayServer *DisplayServerX11::create_func(const String &p_rendering_driver, WindowMode p_mode, VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, Context p_context, Error &r_error) {
 	DisplayServer *ds = memnew(DisplayServerX11(p_rendering_driver, p_mode, p_vsync_mode, p_flags, p_position, p_resolution, p_screen, p_context, r_error));
 	if (r_error != OK) {
-		if (p_rendering_driver == "vulkan") {
+		// When the caller (Main::setup2) will silently retry with the GLES3 driver on
+		// Vulkan failure, skip this blocking alert dialog so headless/handheld setups
+		// without a keyboard/mouse for the dialog don't get stuck on it.
+		bool will_auto_fallback = p_rendering_driver == "vulkan" &&
+#ifdef GLES3_ENABLED
+				bool(GLOBAL_GET("rendering/rendering_device/fallback_to_opengl3"));
+#else
+				false;
+#endif
+		if (p_rendering_driver == "vulkan" && !will_auto_fallback) {
 			String executable_name = OS::get_singleton()->get_executable_path().get_file();
 			OS::get_singleton()->alert(
 					vformat("Your video card drivers seem not to support the required Vulkan version.\n\n"
@@ -5439,7 +5448,7 @@ DisplayServer *DisplayServerX11::create_func(const String &p_rendering_driver, W
 							"If you recently updated your video card drivers, try rebooting.",
 							executable_name),
 					"Unable to initialize Vulkan video driver");
-		} else {
+		} else if (p_rendering_driver != "vulkan") {
 			OS::get_singleton()->alert(
 					"Your video card drivers seem not to support the required OpenGL 3.3 version.\n\n"
 					"If possible, consider updating your video card drivers.\n\n"

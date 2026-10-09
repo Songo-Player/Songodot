@@ -2771,6 +2771,10 @@
 			If [code]true[/code], the forward renderer will fall back to Direct3D 12 if Vulkan is not supported.
 			[b]Note:[/b] This setting is implemented only on Windows.
 		</member>
+		<member name="rendering/rendering_device/fallback_to_opengl3" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], the engine will fall back to the GLES3 (Compatibility) renderer if the RenderingDevice-based driver (Vulkan or Direct3D 12) fails to initialize, instead of aborting startup. This is useful on devices whose GPU drivers only support OpenGL ES, or have a broken/incomplete Vulkan implementation.
+			[b]Note:[/b] This setting is implemented only on Linux/BSD (X11).
+		</member>
 		<member name="rendering/rendering_device/fallback_to_vulkan" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], the forward renderer will fall back to Vulkan if Direct3D 12 is not supported.
 			[b]Note:[/b] This setting is implemented only on Windows.

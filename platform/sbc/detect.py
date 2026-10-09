@@ -21,6 +21,40 @@ def get_opts():
 def get_flags():
     return []
 
+def find_llvm_tool(env, name):
+    """Locate an LLVM tool, also checking clang's own bin dir and versioned
+    names (e.g. Ubuntu's llvm-ar-10), since distros often don't install the
+    plain name. Returns an absolute path, or None."""
+    import shutil
+    import subprocess
+
+    path = shutil.which(name)
+    if path:
+        return path
+
+    cc = env.get("CC", "clang")
+    try:
+        prog = subprocess.check_output([cc, "-print-prog-name=" + name], universal_newlines=True).strip()
+        if os.path.isabs(prog) and os.access(prog, os.X_OK):
+            return prog
+        version = subprocess.check_output([cc, "-dumpversion"], universal_newlines=True).strip().split(".")[0]
+    except (OSError, subprocess.CalledProcessError):
+        version = None
+
+    if version:
+        for candidate in (name + "-" + version, "/usr/lib/llvm-%s/bin/%s" % (version, name)):
+            path = shutil.which(candidate)
+            if path:
+                return path
+    return None
+
+def require_llvm_tool(env, name, package):
+    path = find_llvm_tool(env, name)
+    if not path:
+        print("ERROR: '%s' not found. Install it (e.g. `apt install %s`) or set lto=none." % (name, package))
+        sys.exit(255)
+    return path
+
 def configure(env):
     env.Prepend(CPPPATH=["#platform/sbc"])
     env.Append(CPPDEFINES=["PLATFORM_SBC", "UNIX_ENABLED", "LINUX_ENABLED"])
@@ -141,6 +175,55 @@ def configure(env):
             env["CXX"] = "clang++"
             env["LD"] = "clang++"
         env.extra_suffix = ".llvm" + env.extra_suffix
+
+    # LTO. SConstruct only declares the option; each platform must apply it.
+    if env["lto"] == "auto":  # Full LTO for production.
+        env["lto"] = "full"
+
+    if env["lto"] != "none":
+        if env["lto"] == "thin":
+            if not env.get("use_llvm", False):
+                print("ERROR: ThinLTO is only compatible with LLVM, use `use_llvm=yes` or `lto=full`.")
+                sys.exit(255)
+            env.Append(CCFLAGS=["-flto=thin"])
+            env.Append(LINKFLAGS=["-flto=thin"])
+        elif not env.get("use_llvm", False) and env.GetOption("num_jobs") > 1:
+            env.Append(CCFLAGS=["-flto"])
+            env.Append(LINKFLAGS=["-flto=" + str(env.GetOption("num_jobs"))])
+        else:
+            env.Append(CCFLAGS=["-flto"])
+            env.Append(LINKFLAGS=["-flto"])
+
+        # Archives hold LTO bitcode/GIMPLE, which plain binutils ar can't index.
+        if env.get("use_llvm", False):
+            env["AR"] = require_llvm_tool(env, "llvm-ar", "llvm")
+            env["RANLIB"] = require_llvm_tool(env, "llvm-ranlib", "llvm")
+            # SConstruct adds -Os to LINKFLAGS after configure(). Older clang (10)
+            # forwards that to lld as -plugin-opt=Os, which lld rejects. Clang uses
+            # the last -O flag, so end the link line with -O2 (what newer clang
+            # maps -Os to). Functions keep their size attributes from compile time.
+            if env["optimize"] == "size":
+                env["LINKCOM"] = env["LINKCOM"] + " -O2"
+        elif is_cross:
+            env["AR"] = "aarch64-linux-gnu-gcc-ar"
+            env["RANLIB"] = "aarch64-linux-gnu-gcc-ranlib"
+        else:
+            env["AR"] = "gcc-ar"
+            env["RANLIB"] = "gcc-ranlib"
+
+    # Put each function/data object in its own section so the linker can drop
+    # unreferenced ones, and fold identical functions (lld only).
+    env.Append(CCFLAGS=["-ffunction-sections", "-fdata-sections"])
+    env.Append(LINKFLAGS=["-Wl,--gc-sections"])
+    if env.get("use_llvm", False):
+        # Clang LTO needs lld (GNU ld would need the LLVMgold plugin).
+        # An absolute path also works for versioned installs like ld.lld-10.
+        if env["lto"] != "none":
+            lld = require_llvm_tool(env, "ld.lld", "lld")
+        else:
+            lld = find_llvm_tool(env, "ld.lld")
+        if lld:
+            env.Append(LINKFLAGS=["-fuse-ld=" + lld, "-Wl,--icf=all"])
 
     if env.get("use_static_cpp", True):
         env.Append(LINKFLAGS=["-static-libgcc", "-static-libstdc++"])

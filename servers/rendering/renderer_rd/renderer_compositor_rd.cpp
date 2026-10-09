@@ -33,6 +33,20 @@
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
 
+// Rotates a normalized (0-1) rect from logical screen space into swapchain space by screen_rotation.
+static Rect2 _rotate_screen_rect(const Rect2 &p_rect) {
+	switch (RendererCompositorRD::screen_rotation) {
+		case 1: // 90 degrees clockwise: (u, v) -> (1 - v, u)
+			return Rect2(1.0 - p_rect.position.y - p_rect.size.height, p_rect.position.x, p_rect.size.height, p_rect.size.width);
+		case 2: // 180 degrees: (u, v) -> (1 - u, 1 - v)
+			return Rect2(1.0 - p_rect.position.x - p_rect.size.width, 1.0 - p_rect.position.y - p_rect.size.height, p_rect.size.width, p_rect.size.height);
+		case 3: // 270 degrees clockwise: (u, v) -> (v, 1 - u)
+			return Rect2(p_rect.position.y, 1.0 - p_rect.position.x - p_rect.size.width, p_rect.size.height, p_rect.size.width);
+		default:
+			return p_rect;
+	}
+}
+
 void RendererCompositorRD::blit_render_targets_to_screen(DisplayServer::WindowID p_screen, const BlitToScreen *p_render_targets, int p_amount) {
 	Error err = RD::get_singleton()->screen_prepare_for_drawing(p_screen);
 	if (err != OK) {
@@ -70,10 +84,14 @@ void RendererCompositorRD::blit_render_targets_to_screen(DisplayServer::WindowID
 		blit.push_constant.src_rect[1] = p_render_targets[i].src_rect.position.y;
 		blit.push_constant.src_rect[2] = p_render_targets[i].src_rect.size.width;
 		blit.push_constant.src_rect[3] = p_render_targets[i].src_rect.size.height;
-		blit.push_constant.dst_rect[0] = p_render_targets[i].dst_rect.position.x / screen_size.width;
-		blit.push_constant.dst_rect[1] = p_render_targets[i].dst_rect.position.y / screen_size.height;
-		blit.push_constant.dst_rect[2] = p_render_targets[i].dst_rect.size.width / screen_size.width;
-		blit.push_constant.dst_rect[3] = p_render_targets[i].dst_rect.size.height / screen_size.height;
+		// dst_rect is in logical (unrotated) screen space; normalize it there, then rotate it into the swapchain.
+		Size2 logical_size = (screen_rotation & 1) ? Size2(screen_size.height, screen_size.width) : screen_size;
+		Rect2 dst = _rotate_screen_rect(Rect2(p_render_targets[i].dst_rect.position / logical_size, p_render_targets[i].dst_rect.size / logical_size));
+		blit.push_constant.dst_rect[0] = dst.position.x;
+		blit.push_constant.dst_rect[1] = dst.position.y;
+		blit.push_constant.dst_rect[2] = dst.size.width;
+		blit.push_constant.dst_rect[3] = dst.size.height;
+		blit.push_constant.rotation = screen_rotation;
 		blit.push_constant.layer = p_render_targets[i].multi_view.layer;
 		blit.push_constant.eye_center[0] = p_render_targets[i].lens_distortion.eye_center.x;
 		blit.push_constant.eye_center[1] = p_render_targets[i].lens_distortion.eye_center.y;
@@ -221,6 +239,7 @@ void RendererCompositorRD::set_boot_image(const Ref<Image> &p_image, const Color
 
 	screenrect.position /= window_size;
 	screenrect.size /= window_size;
+	screenrect = _rotate_screen_rect(screenrect);
 
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin_for_screen(DisplayServer::MAIN_WINDOW_ID, p_color);
 
@@ -237,6 +256,7 @@ void RendererCompositorRD::set_boot_image(const Ref<Image> &p_image, const Color
 	blit.push_constant.dst_rect[2] = screenrect.size.width;
 	blit.push_constant.dst_rect[3] = screenrect.size.height;
 	blit.push_constant.layer = 0;
+	blit.push_constant.rotation = screen_rotation;
 	blit.push_constant.eye_center[0] = 0;
 	blit.push_constant.eye_center[1] = 0;
 	blit.push_constant.k1 = 0;
@@ -314,6 +334,12 @@ RendererCompositorRD::RendererCompositorRD() {
 	String rendering_method = OS::get_singleton()->get_current_rendering_method();
 	uint64_t textures_per_stage = RD::get_singleton()->limit_get(RD::LIMIT_MAX_TEXTURES_PER_SHADER_STAGE);
 
+#ifdef _3D_DISABLED
+	// Forward+ only differs from Mobile in 3D. Never instantiating it lets the
+	// linker drop it along with FSR2, TAA, SSAO/SSIL/SSR and its scene shader.
+	(void)textures_per_stage;
+	scene = memnew(RendererSceneRenderImplementation::RenderForwardMobile());
+#else
 	if (rendering_method == "mobile" || textures_per_stage < 48) {
 		if (rendering_method == "forward_plus") {
 			WARN_PRINT_ONCE("Platform supports less than 48 textures per stage which is less than required by the Clustered renderer. Defaulting to Mobile renderer.");
@@ -326,6 +352,7 @@ RendererCompositorRD::RendererCompositorRD() {
 		ERR_PRINT(vformat("Cannot instantiate RenderingDevice-based renderer with renderer type '%s'. Defaulting to Forward+ renderer.", rendering_method));
 		scene = memnew(RendererSceneRenderImplementation::RenderForwardClustered());
 	}
+#endif // _3D_DISABLED
 
 	scene->init();
 }

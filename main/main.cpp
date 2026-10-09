@@ -903,6 +903,33 @@ int Main::test_entrypoint(int argc, char *argv[], bool &tests_need_run) {
  *   in help, it's a bit messy and should be globalized with the setup() parsing somehow.
  */
 
+// On some devices, probing Vulkan just to have it fail (and fall back to GLES3) costs
+// real time on every single boot. Once a device's actual working driver/method is known,
+// remember it here so later launches can skip straight to it. Delete this file (or pass
+// explicit --rendering-driver/--rendering-method arguments) to force re-detection.
+static const char *RENDERING_DRIVER_CACHE_PATH = "user://.rendering_driver_cache";
+
+static bool _load_cached_rendering_driver(String &r_driver, String &r_method) {
+	Ref<FileAccess> f = FileAccess::open(RENDERING_DRIVER_CACHE_PATH, FileAccess::READ);
+	if (f.is_null()) {
+		return false;
+	}
+	Vector<String> parts = f->get_line().split("|");
+	if (parts.size() != 2 || parts[0].is_empty() || parts[1].is_empty()) {
+		return false;
+	}
+	r_driver = parts[0];
+	r_method = parts[1];
+	return true;
+}
+
+static void _save_cached_rendering_driver(const String &p_driver, const String &p_method) {
+	Ref<FileAccess> f = FileAccess::open(RENDERING_DRIVER_CACHE_PATH, FileAccess::WRITE);
+	if (f.is_valid()) {
+		f->store_line(p_driver + "|" + p_method);
+	}
+}
+
 Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_phase) {
 	Thread::make_main_thread();
 	set_current_thread_safe_for_nodes(true);
@@ -1962,6 +1989,10 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 
 		GLOBAL_DEF_RST("rendering/rendering_device/fallback_to_vulkan", true);
 		GLOBAL_DEF_RST("rendering/rendering_device/fallback_to_d3d12", true);
+		// Some (mostly embedded/handheld) GPU drivers only expose OpenGL ES, or have a broken/incomplete
+		// Vulkan implementation. Rather than aborting startup, drop down to the GLES3 compatibility
+		// renderer so the game still launches without requiring --rendering-driver opengl3 on the command line.
+		GLOBAL_DEF_RST("rendering/rendering_device/fallback_to_opengl3", true);
 	}
 
 	{
@@ -2200,7 +2231,22 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	GLOBAL_DEF_RST_BASIC("rendering/renderer/rendering_method.mobile", default_renderer_mobile);
 	GLOBAL_DEF_RST_BASIC("rendering/renderer/rendering_method.web", "gl_compatibility"); // This is a bit of a hack until we have WebGPU support.
 
-	// Default to ProjectSettings default if nothing set on the command line.
+	// If nothing was requested explicitly on the command line, prefer whatever a previous
+	// run already found to actually work on this device over the project's default, so we
+	// don't re-probe (and potentially re-fail) Vulkan on every boot.
+	if (rendering_method.is_empty() || rendering_driver.is_empty()) {
+		String cached_driver, cached_method;
+		if (_load_cached_rendering_driver(cached_driver, cached_method)) {
+			if (rendering_method.is_empty()) {
+				rendering_method = cached_method;
+			}
+			if (rendering_driver.is_empty()) {
+				rendering_driver = cached_driver;
+			}
+		}
+	}
+
+	// Default to ProjectSettings default if nothing set on the command line or cached.
 	if (rendering_method.is_empty()) {
 		rendering_method = GLOBAL_GET("rendering/renderer/rendering_method");
 	}
@@ -2752,6 +2798,31 @@ Error Main::setup2(bool p_show_boot_logo) {
 		// rendering_driver now held in static global String in main and initialized in setup()
 		Error err;
 		display_server = DisplayServer::create(display_driver_idx, rendering_driver, window_mode, window_vsync_mode, window_flags, window_position, window_size, init_screen, context, err);
+
+#ifdef GLES3_ENABLED
+		// If a RenderingDevice-based driver (Vulkan/D3D12) failed to initialize, some GPUs/drivers
+		// (common on ARM handhelds using Mesa GLES-only drivers) simply don't support it. Fall back
+		// to the GLES3 compatibility renderer instead of aborting, so users don't need to pass
+		// --rendering-driver opengl3 manually every time.
+		if ((err != OK || display_server == nullptr) &&
+				(rendering_method == "forward_plus" || rendering_method == "mobile") &&
+				GLOBAL_GET("rendering/rendering_device/fallback_to_opengl3")) {
+			if (display_server) {
+				memdelete(display_server);
+				display_server = nullptr;
+			}
+
+			WARN_PRINT(vformat("Could not initialize %s video driver, falling back to OpenGL 3 (gl_compatibility). To silence this, either fix your Vulkan drivers or force this renderer with --rendering-driver opengl3 --rendering-method gl_compatibility.", rendering_driver));
+
+			rendering_driver = "opengl3";
+			rendering_method = "gl_compatibility";
+			OS::get_singleton()->set_current_rendering_driver_name(rendering_driver);
+			OS::get_singleton()->set_current_rendering_method(rendering_method);
+
+			display_server = DisplayServer::create(display_driver_idx, rendering_driver, window_mode, window_vsync_mode, window_flags, window_position, window_size, init_screen, context, err);
+		}
+#endif
+
 		if (err != OK || display_server == nullptr) {
 			// We can't use this display server, try other ones as fallback.
 			// Skip headless (always last registered) because that's not what users
@@ -2798,6 +2869,28 @@ Error Main::setup2(bool p_show_boot_logo) {
 
 		if (display_server->has_feature(DisplayServer::FEATURE_ORIENTATION)) {
 			display_server->screen_set_orientation(window_orientation);
+		}
+
+		// Some platforms (e.g. the sbc/SDL backend) can fall back from a RenderingDevice
+		// driver to GLES3 internally without failing DisplayServer::create(). Pick that up
+		// so it's reflected consistently (OS-reported driver/method, and the cache below).
+		// GLES3 (gl_compatibility) is the only such fallback target implemented anywhere.
+		String actual_driver = display_server->get_rendering_driver_name();
+		if (!actual_driver.is_empty() && actual_driver != rendering_driver) {
+			rendering_driver = actual_driver;
+			rendering_method = "gl_compatibility";
+			OS::get_singleton()->set_current_rendering_driver_name(rendering_driver);
+			OS::get_singleton()->set_current_rendering_method(rendering_method);
+		}
+
+		// Remember whichever driver/method actually ended up working on this device so
+		// future launches can skip straight to it instead of re-probing Vulkan every boot.
+		{
+			String cached_driver, cached_method;
+			bool have_cache = _load_cached_rendering_driver(cached_driver, cached_method);
+			if (!have_cache || cached_driver != rendering_driver || cached_method != rendering_method) {
+				_save_cached_rendering_driver(rendering_driver, rendering_method);
+			}
 		}
 
 		OS::get_singleton()->benchmark_end_measure("Servers", "Display");

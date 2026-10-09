@@ -1,0 +1,61 @@
+{
+	"type": "build_profile",
+	"disabled_classes": [
+		"CollisionObject2D",
+		"Area2D",
+		"PhysicsBody2D",
+		"StaticBody2D",
+		"AnimatableBody2D",
+		"RigidBody2D",
+		"CharacterBody2D",
+		"PhysicalBone2D",
+		"CollisionShape2D",
+		"CollisionPolygon2D",
+		"RayCast2D",
+		"ShapeCast2D",
+		"Joint2D",
+		"PinJoint2D",
+		"GrooveJoint2D",
+		"DampedSpringJoint2D",
+		"Shape2D",
+		"CircleShape2D",
+		"RectangleShape2D",
+		"CapsuleShape2D",
+		"SegmentShape2D",
+		"SeparationRayShape2D",
+		"WorldBoundaryShape2D",
+		"ConvexPolygonShape2D",
+		"ConcavePolygonShape2D",
+
+		"Light2D",
+		"PointLight2D",
+		"DirectionalLight2D",
+		"LightOccluder2D",
+		"OccluderPolygon2D",
+
+		"GPUParticles2D",
+		"CPUParticles2D",
+
+		"TileMap",
+		"TileMapLayer",
+		"TileSet",
+		"TileSetSource",
+		"TileSetAtlasSource",
+		"TileSetScenesCollectionSource",
+		"TileData",
+		"TileMapPattern",
+
+		"NavigationAgent2D",
+		"NavigationObstacle2D",
+		"NavigationRegion2D",
+		"NavigationLink2D",
+		"NavigationPolygon",
+
+		"Skeleton2D",
+		"Bone2D",
+
+		"Parallax2D",
+		"ParallaxBackground",
+		"ParallaxLayer"
+	]
+}

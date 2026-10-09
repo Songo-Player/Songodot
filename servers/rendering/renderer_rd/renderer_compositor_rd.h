@@ -81,6 +81,9 @@ protected:
 		float aspect_ratio;
 		uint32_t layer;
 		uint32_t convert_to_srgb;
+
+		uint32_t rotation;
+		uint32_t pad[3];
 	};
 
 	struct Blit {
@@ -144,6 +147,12 @@ public:
 	}
 
 	static RendererCompositorRD *get_singleton() { return singleton; }
+
+	// Clockwise quarter turns (0-3) applied when blitting to the screen, for platforms
+	// whose display can't rotate scanout itself (e.g. portrait panels driven via VK_KHR_display).
+	// Render targets are laid out in the unrotated (logical) orientation.
+	static inline uint32_t screen_rotation = 0;
+	static void set_screen_rotation(uint32_t p_quarter_turns) { screen_rotation = p_quarter_turns & 3; }
 	RendererCompositorRD();
 	~RendererCompositorRD();
 };

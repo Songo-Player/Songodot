@@ -41,6 +41,12 @@ private:
 	// Input handling
 	Input *inputHandler;
 	Vector2 last_mouse_pos = Vector2();
+	MouseMode mouse_mode = MOUSE_MODE_HIDDEN;
+	// Clockwise quarter turns the renderer applies to the output (see RendererCompositorRD::screen_rotation).
+	// SDL reports touches in the panel's native orientation, so they're rotated back by this.
+	int screen_rotation = 0;
+
+	Vector2 _touch_to_window(float p_x, float p_y, bool p_is_delta) const;
 	std::set<SDL_JoystickID> gamecontroller_ids; // IDs managed by SDL_GameController
 	std::unordered_map<SDL_JoystickID, SDL_GameController *> controllers; // Optional, for direct access
 	std::unordered_map<SDL_JoystickID, SDL_Joystick *> joysticks; // For non-compatible ones
@@ -71,6 +77,7 @@ public:
 
 	virtual bool has_feature(Feature p_feature) const override;
 	virtual String get_name() const override;
+	virtual String get_rendering_driver_name() const override { return rendering_driver; }
 
 	virtual int get_screen_count() const override;
 	virtual int get_primary_screen() const override;
@@ -141,6 +148,7 @@ public:
 	// Mouse handling
 	virtual Point2i mouse_get_position() const override;
 	virtual void mouse_set_mode(MouseMode p_mode) override;
+	virtual MouseMode mouse_get_mode() const override;
 
 	// Constructor/destructor
 	static DisplayServer *create_func(const String &p_rendering_driver, WindowMode p_mode, VSyncMode p_vsync, uint32_t p_flags, const Point2i *p_position, const Size2i &p_resolution, int p_screen, Context p_context, Error &r_error);
