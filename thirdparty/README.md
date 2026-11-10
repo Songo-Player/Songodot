@@ -870,6 +870,25 @@ They can be reapplied using the patches included in the `patches`
 folder.
 
 
+## taglib
+
+- Upstream: https://github.com/taglib/taglib
+- Version: git (3c917caf52b6d14bfb548d4dc27d8601815edbe2, 2025), v2.1.1 + 3 commits
+- License: LGPL-2.1-only or MPL-1.1
+
+Files extracted from upstream source:
+
+- `taglib/{audioproperties,fileref,tag,tagunion,tagutils}.{cpp,h}` and
+  `taglib/taglib_export.h`
+- All `.cpp` and `.h` files in `taglib/{toolkit,mpeg,ogg,flac,ape,mpc,wavpack,mp4,asf,riff}/`
+  (other formats are left out, see `taglib/taglib_config.h`)
+- `3rdparty/utfcpp/source/` and `3rdparty/utfcpp/LICENSE` (utfcpp v3.2.3, BSL-1.0)
+- `COPYING.LGPL`, `COPYING.MPL`
+
+`taglib/taglib_config.h` is written by hand for Godot in place of the CMake
+generated one and must list the same formats as `modules/gdtaglib/SCsub`.
+
+
 ## tinyexr
 
 - Upstream: https://github.com/syoyo/tinyexr

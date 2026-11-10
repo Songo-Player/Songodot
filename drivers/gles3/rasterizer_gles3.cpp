@@ -35,7 +35,9 @@
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
 #include "core/os/os.h"
+#ifdef PLATFORM_SBC
 #include "platform/sbc/display_server_sdl.h"
+#endif
 #include "storage/texture_storage.h"
 
 #define _EXT_DEBUG_OUTPUT_SYNCHRONOUS_ARB 0x8242
@@ -209,9 +211,11 @@ void RasterizerGLES3::finalize() {
 	memdelete(canvas);
 	memdelete(gi);
 	memdelete(fog);
+#ifndef _3D_DISABLED
 	memdelete(post_effects);
 	memdelete(glow);
 	memdelete(cubemap_filter);
+#endif // _3D_DISABLED
 	memdelete(copy_effects);
 	memdelete(light_storage);
 	memdelete(particles_storage);
@@ -364,9 +368,13 @@ RasterizerGLES3::RasterizerGLES3() {
 	particles_storage = memnew(GLES3::ParticlesStorage);
 	light_storage = memnew(GLES3::LightStorage);
 	copy_effects = memnew(GLES3::CopyEffects);
+#ifndef _3D_DISABLED
+	// Only used by 3D: sky radiance/reflection probes and 3D post-processing.
+	// Skipped in 2D-only builds so their shaders aren't set up at startup.
 	cubemap_filter = memnew(GLES3::CubemapFilter);
 	glow = memnew(GLES3::Glow);
 	post_effects = memnew(GLES3::PostEffects);
+#endif // _3D_DISABLED
 	gi = memnew(GLES3::GI);
 	fog = memnew(GLES3::Fog);
 	canvas = memnew(RasterizerCanvasGLES3());

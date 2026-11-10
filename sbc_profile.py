@@ -81,6 +81,9 @@ module_mbedtls_enabled = "yes"  # HTTPS (lrclib lyrics, network status check).
 module_regex_enabled = "yes"
 module_noise_enabled = "yes"  # FastNoiseLite/NoiseTexture2D in the Noted theme.
 
+# Music library: tag reading, directory scans, cover art (GDTagLib class).
+module_gdtaglib_enabled = "yes"
+
 # --- Build time ------------------------------------------------------------------
 # Single compilation unit build: much faster full rebuilds. Disable if you hit
 # odd duplicate-symbol errors in platform/sbc code, or run low on RAM.

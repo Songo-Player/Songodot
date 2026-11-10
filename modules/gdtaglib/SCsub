@@ -1,0 +1,82 @@
+#!/usr/bin/env python
+
+Import("env")
+Import("env_modules")
+
+env_gdtaglib = env_modules.Clone()
+
+# Thirdparty source files
+
+thirdparty_obj = []
+
+thirdparty_dir = "#thirdparty/taglib/"
+taglib_dir = thirdparty_dir + "taglib/"
+
+# Only the formats Songo-5 scans for: MP3/AAC, FLAC, Ogg Vorbis/Opus, M4A,
+# WMA, WAV/AIFF, plus APE (tags on MP3s). Must match taglib/taglib_config.h.
+taglib_subdirs = [
+    "toolkit",
+    "mpeg",
+    "mpeg/id3v1",
+    "mpeg/id3v2",
+    "mpeg/id3v2/frames",
+    "ogg",
+    "ogg/vorbis",
+    "ogg/opus",
+    "ogg/speex",
+    "ogg/flac",
+    "flac",
+    "ape",
+    "mpc",
+    "wavpack",
+    "mp4",
+    "asf",
+    "riff",
+    "riff/aiff",
+    "riff/wav",
+]
+
+thirdparty_sources = [
+    taglib_dir + "audioproperties.cpp",
+    taglib_dir + "fileref.cpp",
+    taglib_dir + "tag.cpp",
+    taglib_dir + "tagunion.cpp",
+    taglib_dir + "tagutils.cpp",
+]
+for subdir in taglib_subdirs:
+    thirdparty_sources += Glob(taglib_dir + subdir + "/*.cpp")
+
+# TagLib headers include each other by bare name, so every source dir is on
+# the include path. Prepended so a "config.h"-style name elsewhere can't win.
+env_gdtaglib.Prepend(CPPPATH=[taglib_dir] + [taglib_dir + subdir for subdir in taglib_subdirs])
+env_gdtaglib.Append(CPPDEFINES=["TAGLIB_STATIC"])
+
+env_thirdparty = env_gdtaglib.Clone()
+env_thirdparty.disable_warnings()
+env_thirdparty.Prepend(CPPPATH=[thirdparty_dir + "3rdparty/utfcpp/source"])
+# zlib (compressed ID3v2 frames) is always linked into Godot, builtin or not.
+env_thirdparty.Append(CPPDEFINES=["HAVE_ZLIB"])
+if env.msvc:
+    env_thirdparty.Append(CPPDEFINES=["HAVE_MSC_BYTESWAP"])
+else:
+    env_thirdparty.Append(CPPDEFINES=["HAVE_GCC_BYTESWAP"])
+
+# TagLib's UTF-8 conversion catches utfcpp exceptions for malformed tags, so
+# it needs exception support even though Godot builds without it.
+if env.msvc:
+    env_thirdparty.Append(CXXFLAGS=["/EHsc"])
+else:
+    env_thirdparty.Append(CXXFLAGS=["-fexceptions"])
+
+env_thirdparty.add_source_files(thirdparty_obj, thirdparty_sources)
+env.modules_sources += thirdparty_obj
+
+# Godot source files
+
+module_obj = []
+
+env_gdtaglib.add_source_files(module_obj, "*.cpp")
+env.modules_sources += module_obj
+
+# Needed to force rebuilding the module files when the thirdparty library is updated.
+env.Depends(module_obj, thirdparty_obj)

@@ -4123,9 +4123,15 @@ RasterizerSceneGLES3::RasterizerSceneGLES3() {
 		global_defines += "\n#define MAX_ROUGHNESS_LOD " + itos(sky_globals.roughness_layers - 1) + ".0\n";
 		material_storage->shaders.scene_shader.initialize(global_defines);
 		scene_globals.shader_default_version = material_storage->shaders.scene_shader.version_create();
+#ifndef _3D_DISABLED
 		material_storage->shaders.scene_shader.version_bind_shader(scene_globals.shader_default_version, SceneShaderGLES3::MODE_COLOR);
+#endif // _3D_DISABLED
 	}
 
+#ifndef _3D_DISABLED
+	// The default/overdraw 3D materials and the default/clear color sky materials
+	// are only used when rendering a 3D scene. 2D-only builds skip them, which
+	// saves compiling their shaders at startup.
 	{
 		//default material and shader
 		scene_globals.default_shader = material_storage->shader_allocate();
@@ -4172,6 +4178,7 @@ void fragment() {
 		material_storage->material_set_shader(scene_globals.overdraw_material, scene_globals.overdraw_shader);
 		overdraw_material_data_ptr = static_cast<GLES3::SceneMaterialData *>(GLES3::MaterialStorage::get_singleton()->material_get_data(scene_globals.overdraw_material, RS::SHADER_SPATIAL));
 	}
+#endif // _3D_DISABLED
 
 	{
 		// Initialize Sky stuff
@@ -4184,6 +4191,7 @@ void fragment() {
 		sky_globals.shader_default_version = material_storage->shaders.sky_shader.version_create();
 	}
 
+#ifndef _3D_DISABLED
 	{
 		sky_globals.default_shader = material_storage->shader_allocate();
 
@@ -4223,6 +4231,7 @@ void sky() {
 
 		material_storage->material_set_shader(sky_globals.fog_material, sky_globals.fog_shader);
 	}
+#endif // _3D_DISABLED
 
 	{
 		glGenVertexArrays(1, &sky_globals.screen_triangle_array);
@@ -4273,19 +4282,23 @@ RasterizerSceneGLES3::~RasterizerSceneGLES3() {
 
 	// Scene Shader
 	GLES3::MaterialStorage::get_singleton()->shaders.scene_shader.version_free(scene_globals.shader_default_version);
+#ifndef _3D_DISABLED
 	RSG::material_storage->material_free(scene_globals.default_material);
 	RSG::material_storage->shader_free(scene_globals.default_shader);
 
 	// Overdraw Shader
 	RSG::material_storage->material_free(scene_globals.overdraw_material);
 	RSG::material_storage->shader_free(scene_globals.overdraw_shader);
+#endif // _3D_DISABLED
 
 	// Sky Shader
 	GLES3::MaterialStorage::get_singleton()->shaders.sky_shader.version_free(sky_globals.shader_default_version);
+#ifndef _3D_DISABLED
 	RSG::material_storage->material_free(sky_globals.default_material);
 	RSG::material_storage->shader_free(sky_globals.default_shader);
 	RSG::material_storage->material_free(sky_globals.fog_material);
 	RSG::material_storage->shader_free(sky_globals.fog_shader);
+#endif // _3D_DISABLED
 	GLES3::Utilities::get_singleton()->buffer_free_data(sky_globals.screen_triangle);
 	glDeleteVertexArrays(1, &sky_globals.screen_triangle_array);
 	GLES3::Utilities::get_singleton()->buffer_free_data(sky_globals.directional_light_buffer);

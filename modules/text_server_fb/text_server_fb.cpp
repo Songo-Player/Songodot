@@ -2926,6 +2926,7 @@ void TextServerFallback::invalidate(ShapedTextDataFallback *p_shaped) {
 	p_shaped->sort_valid = false;
 	p_shaped->line_breaks_valid = false;
 	p_shaped->justification_ops_valid = false;
+	p_shaped->text_trimmed = false;
 	p_shaped->ascent = 0.0;
 	p_shaped->descent = 0.0;
 	p_shaped->width = 0.0;
@@ -4390,9 +4391,9 @@ Size2 TextServerFallback::_shaped_text_get_size(const RID &p_shaped) const {
 		const_cast<TextServerFallback *>(this)->_shaped_text_shape(p_shaped);
 	}
 	if (sd->orientation == TextServer::ORIENTATION_HORIZONTAL) {
-		return Size2(sd->width, sd->ascent + sd->descent + sd->extra_spacing[SPACING_TOP] + sd->extra_spacing[SPACING_BOTTOM]).ceil();
+		return Size2((sd->text_trimmed ? sd->width_trimmed : sd->width), sd->ascent + sd->descent + sd->extra_spacing[SPACING_TOP] + sd->extra_spacing[SPACING_BOTTOM]).ceil();
 	} else {
-		return Size2(sd->ascent + sd->descent + sd->extra_spacing[SPACING_TOP] + sd->extra_spacing[SPACING_BOTTOM], sd->width).ceil();
+		return Size2(sd->ascent + sd->descent + sd->extra_spacing[SPACING_TOP] + sd->extra_spacing[SPACING_BOTTOM], (sd->text_trimmed ? sd->width_trimmed : sd->width)).ceil();
 	}
 }
 
@@ -4426,7 +4427,7 @@ double TextServerFallback::_shaped_text_get_width(const RID &p_shaped) const {
 	if (!sd->valid) {
 		const_cast<TextServerFallback *>(this)->_shaped_text_shape(p_shaped);
 	}
-	return Math::ceil(sd->width);
+	return Math::ceil(sd->text_trimmed ? sd->width_trimmed : sd->width);
 }
 
 double TextServerFallback::_shaped_text_get_underline_position(const RID &p_shaped) const {
