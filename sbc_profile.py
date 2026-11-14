@@ -10,7 +10,7 @@
 # If omitted, Godot's SConstruct defaults to (CPU count - 1) jobs.
 #
 # Tuned for Songo (../Songo-5): a 2D, UI-only app. Audio/video playback goes
-# through the FFmpeg GDExtension, so most engine codecs are unnecessary.
+# through the songo_player_harness module, so most engine codecs are unnecessary.
 
 platform = "sbc"
 arch = "arm64"
@@ -73,7 +73,7 @@ module_webp_enabled = "yes"  # Background spritesheets, cover art cache (save_we
 module_jpg_enabled = "yes"  # Cover art.
 module_bmp_enabled = "yes"  # Cover art (load_bmp_from_buffer).
 
-# Audio. Music goes through FFmpeg; UI sound effects are imported MP3s.
+# Audio. Music goes through the songo_player_harness module; UI sound effects are imported MP3s.
 module_minimp3_enabled = "yes"
 
 # Networking/misc.
@@ -83,6 +83,10 @@ module_noise_enabled = "yes"  # FastNoiseLite/NoiseTexture2D in the Noted theme.
 
 # Music library: tag reading, directory scans, cover art (GDTagLib class).
 module_gdtaglib_enabled = "yes"
+
+# Music playback: the SongoPlayerHarness node. The engine it drives (FFmpeg
+# inside) is libsongo_engine from ../SongoBGPlayer, loaded at runtime.
+module_songo_player_harness_enabled = "yes"
 
 # --- Build time ------------------------------------------------------------------
 # Single compilation unit build: much faster full rebuilds. Disable if you hit

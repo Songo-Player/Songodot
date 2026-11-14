@@ -13,11 +13,11 @@
 # bin/android_release.apk / android_debug.apk for non-Gradle exports.
 #
 # Tuned for Songo (../Songo-5): a 2D, UI-only app. Music playback goes through
-# the songo_player_harness GDExtension, so most engine codecs are unnecessary.
+# the songo_player_harness module, so most engine codecs are unnecessary.
 
 platform = "android"
-# Songo-5's Android export only enables arm64-v8a, and the songo_player_harness
-# extension only ships arm64 Android libraries.
+# Songo-5's Android export only enables arm64-v8a, and SongoBGPlayer only builds
+# the music engine for arm64 Android.
 arch = "arm64"
 target = "template_release"
 
@@ -83,7 +83,7 @@ module_webp_enabled = "yes"  # Background spritesheets, cover art cache (save_we
 module_jpg_enabled = "yes"  # Cover art.
 module_bmp_enabled = "yes"  # Cover art (load_bmp_from_buffer).
 
-# Audio. Music goes through songo_player_harness; UI sound effects are imported MP3s.
+# Audio. Music goes through the songo_player_harness module; UI sound effects are imported MP3s.
 module_minimp3_enabled = "yes"
 
 # Networking/misc.
@@ -93,6 +93,10 @@ module_noise_enabled = "yes"  # FastNoiseLite/NoiseTexture2D in the Noted theme.
 
 # Music library: tag reading, directory scans, cover art (GDTagLib class).
 module_gdtaglib_enabled = "yes"
+
+# Music playback: the SongoPlayerHarness node. The engine it drives (FFmpeg
+# inside) is libsongo_engine from ../SongoBGPlayer, loaded at runtime.
+module_songo_player_harness_enabled = "yes"
 
 # --- Build time ------------------------------------------------------------------
 # Single compilation unit build: much faster full rebuilds. Disable if you hit

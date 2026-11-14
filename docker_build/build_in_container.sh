@@ -7,8 +7,14 @@
 # binary comes back out.
 #
 #   build_in_container.sh [scons arguments...]
+#
+# SONGODOT_PROFILE (default sbc_profile.py) and SONGODOT_BIN_GLOB (default
+# the SBC template) are set by each image's Dockerfile.
 
 set -e
+
+PROFILE="${SONGODOT_PROFILE:-sbc_profile.py}"
+BIN_GLOB="${SONGODOT_BIN_GLOB:-bin/godot.sbc.template_*.arm64*}"
 
 echo "==> Syncing the repo to /work/src..."
 mkdir -p /work/src
@@ -17,6 +23,7 @@ rsync -a --delete \
     --exclude=/bin \
     --exclude=/dist \
     --exclude=/docker_build/.work \
+    --exclude=/docker_build/.work-windows \
     --exclude=/.sconf_temp \
     --exclude=/config.log \
     --exclude=.sconsign.dblite \
@@ -27,10 +34,11 @@ rsync -a --delete \
     /src/ /work/src/
 cd /work/src
 
-echo "==> Building with sbc_profile.py..."
-scons profile=sbc_profile.py -j"$(nproc)" "$@"
+echo "==> Building with $PROFILE..."
+scons profile="$PROFILE" -j"$(nproc)" "$@"
 
-BIN="$(ls -t bin/godot.sbc.template_*.arm64* | head -1)"
+# shellcheck disable=SC2086
+BIN="$(ls -t $BIN_GLOB | head -1)"
 cp -f "$BIN" /out/
 echo
 echo "==> Done:"

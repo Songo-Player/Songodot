@@ -1,0 +1,9 @@
+#ifndef SONGO_PLAYER_HARNESS_REGISTER_TYPES_H
+#define SONGO_PLAYER_HARNESS_REGISTER_TYPES_H
+
+#include "modules/register_module_types.h"
+
+void initialize_songo_player_harness_module(ModuleInitializationLevel p_level);
+void uninitialize_songo_player_harness_module(ModuleInitializationLevel p_level);
+
+#endif // SONGO_PLAYER_HARNESS_REGISTER_TYPES_H
