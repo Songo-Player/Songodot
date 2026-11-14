@@ -1,4 +1,5 @@
 #include "gdtaglib.h"
+#include "tag_reader.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
@@ -49,14 +50,8 @@ void GDTagLib::_bind_methods() {
 
 	ClassDB::bind_static_method("GDTagLib", D_METHOD("build_music_records", "paths", "progress", "opts"),
 			&GDTagLib::build_music_records, DEFVAL(Callable()), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("GDTagLib", D_METHOD("refresh_music_library", "previous_records", "current_paths", "opts"),
-			&GDTagLib::refresh_music_library, DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("GDTagLib", D_METHOD("plan_music_library_update", "previous_records", "current_paths", "opts"),
-			&GDTagLib::plan_music_library_update, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("GDTagLib", D_METHOD("scan_directories", "roots", "groups", "progress", "opts"),
 			&GDTagLib::scan_directories, DEFVAL(Callable()), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("GDTagLib", D_METHOD("save_music_library", "path", "library"), &GDTagLib::save_music_library);
-	ClassDB::bind_static_method("GDTagLib", D_METHOD("load_music_library", "path"), &GDTagLib::load_music_library);
 	ClassDB::bind_static_method("GDTagLib", D_METHOD("get_cover", "path"), &GDTagLib::get_cover);
 	ClassDB::bind_static_method("GDTagLib", D_METHOD("get_cover_image", "path"), &GDTagLib::get_cover_image);
 
@@ -313,27 +308,9 @@ Ref<Texture2D> GDTagLib::get_cover_image(const String &p_path) {
 // Tag reading
 // ====================================================================
 
-// Everything a TagLibMusicRecord needs from one file, as plain data so it can
-// be filled on a worker thread and turned into a record on the calling thread
-// afterwards. Fields stay empty / 0 when a tag is missing or the file can't
-// be opened.
-struct TagFields {
-	String title;
-	String artist;
-	String album;
-	String genre;
-	String album_artist;
-	String musicbrainz_album_id;
-	int year = 0;
-	int track = 0;
-	int disc = 0;
-	int duration = 0;
-	int bitrate = 0;
-	int sample_rate = 0;
-	int channels = 0;
-	int64_t file_mtime = 0;
-	int64_t file_size = -1;
-};
+// Files are read into TagFields (tag_reader.h): plain data, so it can be
+// filled on a worker thread. Fields stay empty / 0 when a tag is missing or
+// the file can't be opened.
 
 static int _disc_from_string(const TagLib::String &p_value) {
 	String v = _convert_taglib_string(p_value);
@@ -677,46 +654,6 @@ static void _read_file_fields(const String &p_abs_path, const String &p_ext,
 	_file_stamp(p_abs_path, r_out.file_mtime, r_out.file_size);
 }
 
-static Ref<TagLibMusicRecord> _record_from_fields(const String &p_path, const TagFields &p_fields) {
-	Ref<TagLibMusicRecord> rec;
-	rec.instantiate();
-	rec->set_full_path(p_path);
-
-	// Fallback for an untagged (or unparseable) file: the file name without
-	// its extension, e.g. "04 - Weightless.flac" -> "04 - Weightless".
-	String stem = p_path.get_file().get_basename();
-
-	rec->set_title(p_fields.title.strip_edges().is_empty() ? stem : p_fields.title);
-	rec->set_artist(p_fields.artist.strip_edges().is_empty() ? String("Unknown Artist") : p_fields.artist);
-	rec->set_album(p_fields.album.strip_edges().is_empty() ? String("Unknown Album") : p_fields.album);
-
-	// Left empty when the file has no album-artist tag; _assemble_library
-	// infers a value per album.
-	rec->set_album_artist(p_fields.album_artist.strip_edges());
-	rec->set_genre(p_fields.genre.strip_edges());
-	rec->set_musicbrainz_album_id(p_fields.musicbrainz_album_id.strip_edges());
-
-	rec->set_raw_length((double)p_fields.duration);
-	rec->set_track(p_fields.track);
-	rec->set_disc(p_fields.disc);
-	rec->set_year(p_fields.year);
-	rec->set_bitrate(p_fields.bitrate);
-	rec->set_sample_rate(p_fields.sample_rate);
-	rec->set_channels(p_fields.channels);
-
-	rec->set_file_mtime(p_fields.file_mtime);
-	rec->set_file_size(p_fields.file_size);
-
-	return rec;
-}
-
-// One file, read on the calling thread (refresh_music_library).
-static Ref<TagLibMusicRecord> _build_music_record(const String &p_path) {
-	TagFields fields;
-	_read_file_fields(ProjectSettings::get_singleton()->globalize_path(p_path),
-			p_path.get_extension().to_lower(), ReadConfig(), fields);
-	return _record_from_fields(p_path, fields);
-}
 
 #ifndef _WIN32
 // Pulls a file's head and tail (the regions HeadTailStream will read) into the
@@ -745,14 +682,16 @@ static void _prefetch_file(const std::string &p_fs_path, const ReadConfig &p_con
 }
 #endif
 
-TypedArray<TagLibMusicRecord> GDTagLib::build_music_records(
-		const PackedStringArray &p_paths,
-		const Callable &p_progress,
-		const Dictionary &p_opts) {
-	TypedArray<TagLibMusicRecord> out;
+// ====================================================================
+// Batch tag reading
+// ====================================================================
+
+bool gdtaglib_read_fields(const PackedStringArray &p_paths, const Callable &p_progress,
+		const Dictionary &p_opts, std::vector<TagFields> &r_fields) {
 	const int count = p_paths.size();
+	r_fields.clear();
 	if (count == 0) {
-		return out;
+		return true;
 	}
 
 	int threads = (int)p_opts.get("threads", 0);
@@ -799,7 +738,8 @@ TypedArray<TagLibMusicRecord> GDTagLib::build_music_records(
 		return abs_paths[a] < abs_paths[b];
 	});
 
-	std::vector<TagFields> fields(count);
+	r_fields.resize(count);
+	std::vector<TagFields> &fields = r_fields;
 	std::atomic<int> next{ 0 }; // next slot in order to hand to a worker
 	std::atomic<int> done{ 0 };
 	std::atomic<bool> cancel{ false };
@@ -890,460 +830,35 @@ TypedArray<TagLibMusicRecord> GDTagLib::build_music_records(
 #endif
 
 	if (cancel.load()) {
-		return out;
+		r_fields.clear();
+		return false;
 	}
 	if (p_progress.is_valid() && reported != count) {
 		p_progress.call(count);
 	}
-
-	out.resize(count);
-	for (int i = 0; i < count; i++) {
-		out.set(i, _record_from_fields(p_paths[i], fields[i]));
-	}
-	return out;
+	return true;
 }
 
-// ====================================================================
-// Library assembly (albums + album artists)
-// ====================================================================
 
-// Collapse the common "various artists" spellings to one canonical value.
-// Returns "" for an empty/whitespace input so callers can treat it as unset.
-static String _canonical_various_artists(const String &p_in) {
-	String s = p_in.strip_edges();
-	if (s.is_empty()) {
-		return String();
-	}
-	String l = s.to_lower();
-	if (l == "va" || l == "v.a." || l == "v. a." || l == "various" ||
-			l == "various artists" || l == "various_artists") {
-		return String("Various Artists");
-	}
-	return s;
+void gdtaglib_file_stamp(const String &p_path, int64_t &r_mtime, int64_t &r_size) {
+	_file_stamp(ProjectSettings::get_singleton()->globalize_path(p_path), r_mtime, r_size);
 }
 
-// Stable, filesystem-safe id derived from a display name, matching the
-// scheme Songo-5's *_record.gd build_asset() used.
-static String _asset_id_from_name(const String &p_name) {
-	String cleaned = p_name.strip_edges().replace(" ", "_");
-	String safe;
-	for (int i = 0; i < cleaned.length(); i++) {
-		char32_t c = cleaned[i];
-		bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-				(c >= '0' && c <= '9') || c == '_';
-		if (ok) {
-			safe += String::chr(c);
-		}
-	}
-	if (safe.length() > 3) {
-		return safe;
-	}
-	return String("defaulted_id_") + itos((int64_t)p_name.hash());
-}
-
-// Key with the highest count; ties resolve to the first-inserted key
-// (Dictionaries preserve insertion order).
-static String _highest_count_key(const Dictionary &p_counts) {
-	Array keys = p_counts.keys();
-	String best;
-	int best_count = -1;
-	for (int i = 0; i < keys.size(); i++) {
-		int c = (int)(int64_t)p_counts[keys[i]];
-		if (c > best_count) {
-			best_count = c;
-			best = keys[i];
-		}
-	}
-	return best;
-}
-
-// Lowercase, trim, and collapse internal whitespace runs to a single space,
-// so trivially different spellings of a name hash to the same bucket.
-static String _normalize_key(const String &p_in) {
-	String t = p_in.strip_edges().to_lower();
-	String out;
-	bool prev_ws = false;
-	for (int i = 0; i < t.length(); i++) {
-		char32_t c = t[i];
-		bool ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r');
-		if (ws) {
-			if (!prev_ws) {
-				out += " ";
-			}
-			prev_ws = true;
-		} else {
-			out += String::chr(c);
-			prev_ws = false;
-		}
-	}
-	return out;
-}
-
-// Stable identity for the album a record belongs to, chosen so every track of
-// one real album keys the same:
-//   - all "Unknown Album" tracks collapse into a single shared bucket;
-//   - a MusicBrainz Album ID, when tagged, keys the album exactly;
-//   - otherwise the normalized album name alone -- deliberately NOT the
-//     per-track artist, which varies within an album (features, split credits)
-//     and was splitting real albums apart. Two unrelated same-named albums
-//     without an MBID will merge and resolve to "Various Artists".
-static String _album_key(const Ref<TagLibMusicRecord> &p_rec) {
-	String album_norm = _normalize_key(p_rec->get_album());
-	if (album_norm.is_empty() || album_norm == "unknown album") {
-		return "\x1funknown-album";
-	}
-	String mbid = p_rec->get_musicbrainz_album_id().strip_edges();
-	if (!mbid.is_empty()) {
-		return "mbid\x1f" + mbid;
-	}
-	return "name\x1f" + album_norm;
-}
-
-template <typename T>
-static TypedArray<T> _to_typed_array(const std::vector<Ref<T>> &p_items) {
-	TypedArray<T> out;
-	out.resize(p_items.size());
-	for (size_t i = 0; i < p_items.size(); i++) {
-		out.set((int)i, p_items[i]);
-	}
-	return out;
-}
-
-static bool _title_less(const Ref<TagLibMusicRecord> &x, const Ref<TagLibMusicRecord> &y) {
-	return x->get_title().nocasecmp_to(y->get_title()) < 0;
-}
-
-// Recompute albums + (album) artists from a full set of records and package
-// the three lists into a Dictionary, always from the whole library, never
-// merged.
-static Dictionary _assemble_library(const std::vector<Ref<TagLibMusicRecord>> &p_records) {
-	// --- group records by album identity (first-seen order) ----------
-	std::vector<String> album_keys;
-	std::vector<String> album_names; // human display name, from the first record
-	std::vector<std::vector<Ref<TagLibMusicRecord>>> album_groups;
-	Dictionary album_index;
-	for (const Ref<TagLibMusicRecord> &rec : p_records) {
-		String key = _album_key(rec);
-		int idx;
-		if (album_index.has(key)) {
-			idx = (int)(int64_t)album_index[key];
-		} else {
-			idx = (int)album_keys.size();
-			album_index[key] = idx;
-			album_keys.push_back(key);
-			album_names.push_back(rec->get_album());
-			album_groups.push_back(std::vector<Ref<TagLibMusicRecord>>());
-		}
-		album_groups[idx].push_back(rec);
-	}
-
-	// asset_id stays the readable sanitized name while that name is unique;
-	// genuinely distinct same-named albums fall back to a key-derived suffix
-	// so their cover-art files never collide. Order-independent.
-	Dictionary album_base_counts;
-	std::vector<String> album_bases;
-	for (const String &album_name : album_names) {
-		String base = _asset_id_from_name(album_name);
-		album_bases.push_back(base);
-		album_base_counts[base] = (int)(int64_t)album_base_counts.get(base, 0) + 1;
-	}
-
-	// --- build album + (album) artist records -----------------------
-	std::vector<Ref<TagLibAlbumRecord>> albums;
-	std::vector<Ref<TagLibArtistRecord>> artists;
-	std::vector<std::vector<Ref<TagLibMusicRecord>>> artist_groups;
-	Dictionary artist_index;
-
-	for (int i = 0; i < (int)album_keys.size(); i++) {
-		std::vector<Ref<TagLibMusicRecord>> &group = album_groups[i];
-
-		Ref<TagLibAlbumRecord> album;
-		album.instantiate();
-		album->set_name(album_names[i]);
-
-		PackedStringArray distinct_artists; // every distinct per-track artist, first seen
-		Dictionary explicit_album_artists; // canonical album-artist tag -> record count
-		Dictionary artist_record_counts; // canonical track artist -> # records crediting them
-
-		for (const Ref<TagLibMusicRecord> &rec : group) {
-			// Split the artist tag on commas, the way the app historically did,
-			// so a track credited "A, B" counts toward both A and B.
-			Vector<String> parts = rec->get_artist().split(",", false);
-			Dictionary seen_here; // count each artist at most once per record
-			for (const String &part : parts) {
-				String piece = _canonical_various_artists(part); // trims + folds VA spellings
-				if (piece.is_empty() || piece == "Unknown Artist" || seen_here.has(piece)) {
-					continue;
-				}
-				seen_here[piece] = true;
-				if (!distinct_artists.has(piece)) {
-					distinct_artists.push_back(piece);
-				}
-				artist_record_counts[piece] = (int)(int64_t)artist_record_counts.get(piece, 0) + 1;
-			}
-
-			String aa = _canonical_various_artists(rec->get_album_artist());
-			if (!aa.is_empty()) {
-				explicit_album_artists[aa] = (int)(int64_t)explicit_album_artists.get(aa, 0) + 1;
-			}
-		}
-		album->set_artists(distinct_artists);
-
-		// Resolve the album artist:
-		//  1. an explicit album-artist tag wins -- the most common one if they differ;
-		//  2. otherwise, only when a single artist is credited on a MAJORITY of the
-		//     album's tracks does that artist become the album artist;
-		//  3. otherwise it's treated as a compilation -> "Various Artists".
-		String resolved;
-		if (!explicit_album_artists.is_empty()) {
-			resolved = _highest_count_key(explicit_album_artists);
-		} else {
-			String top = _highest_count_key(artist_record_counts);
-			int top_count = top.is_empty() ? 0 : (int)(int64_t)artist_record_counts[top];
-			if (top_count > 0 && top_count * 2 > (int)group.size()) {
-				resolved = top;
-			}
-		}
-		if (resolved.is_empty()) {
-			resolved = "Various Artists";
-		}
-		album->set_album_artist(resolved);
-
-		String album_asset_id = album_bases[i];
-		if ((int)(int64_t)album_base_counts[album_bases[i]] > 1) {
-			album_asset_id += "_" + itos((int64_t)album_keys[i].hash());
-		}
-		album->set_asset_id(album_asset_id);
-
-		// tracks ordered for album playback: disc, then track, then title
-		std::sort(group.begin(), group.end(),
-				[](const Ref<TagLibMusicRecord> &x, const Ref<TagLibMusicRecord> &y) {
-					if (x->get_disc() != y->get_disc()) {
-						return x->get_disc() < y->get_disc();
-					}
-					if (x->get_track() != y->get_track()) {
-						return x->get_track() < y->get_track();
-					}
-					return _title_less(x, y);
-				});
-		album->set_music_records(_to_typed_array(group));
-		albums.push_back(album);
-
-		// The artists directory is album-artist driven: tracks on a
-		// "Various Artists" album are not filed under any single artist.
-		if (resolved != "Various Artists") {
-			int artist_idx;
-			if (artist_index.has(resolved)) {
-				artist_idx = (int)(int64_t)artist_index[resolved];
-			} else {
-				Ref<TagLibArtistRecord> artist;
-				artist.instantiate();
-				artist->set_name(resolved);
-				artist_idx = (int)artists.size();
-				artist_index[resolved] = artist_idx;
-				artists.push_back(artist);
-				artist_groups.push_back(std::vector<Ref<TagLibMusicRecord>>());
-			}
-			std::vector<Ref<TagLibMusicRecord>> &artist_group = artist_groups[artist_idx];
-			artist_group.insert(artist_group.end(), group.begin(), group.end());
-		}
-	}
-
-	// artist asset_id: same readable-unless-colliding scheme as albums.
-	// An artist's tracks span albums, so they're listed by title.
-	Dictionary artist_base_counts;
-	for (const Ref<TagLibArtistRecord> &artist : artists) {
-		String base = _asset_id_from_name(artist->get_name());
-		artist_base_counts[base] = (int)(int64_t)artist_base_counts.get(base, 0) + 1;
-	}
-	for (int i = 0; i < (int)artists.size(); i++) {
-		const Ref<TagLibArtistRecord> &artist = artists[i];
-		String base = _asset_id_from_name(artist->get_name());
-		String id = base;
-		if ((int)(int64_t)artist_base_counts[base] > 1) {
-			id += "_" + itos((int64_t)artist->get_name().hash());
-		}
-		artist->set_asset_id(id);
-
-		std::sort(artist_groups[i].begin(), artist_groups[i].end(), _title_less);
-		artist->set_music_records(_to_typed_array(artist_groups[i]));
-	}
-
-	// --- order the top level lists the way Songo-5 presents them -----
-	std::vector<Ref<TagLibMusicRecord>> records_sorted = p_records;
-	std::sort(records_sorted.begin(), records_sorted.end(), _title_less);
-
-	std::sort(albums.begin(), albums.end(),
-			[](const Ref<TagLibAlbumRecord> &x, const Ref<TagLibAlbumRecord> &y) {
-				bool xu = x->get_name() == "Unknown Album";
-				bool yu = y->get_name() == "Unknown Album";
-				if (xu != yu) {
-					return yu; // "Unknown Album" sinks to the bottom
-				}
-				return x->get_name().nocasecmp_to(y->get_name()) < 0;
-			});
-
-	std::sort(artists.begin(), artists.end(),
-			[](const Ref<TagLibArtistRecord> &x, const Ref<TagLibArtistRecord> &y) {
-				return x->get_name().nocasecmp_to(y->get_name()) < 0;
-			});
-
-	Dictionary out;
-	out["music_records"] = _to_typed_array(records_sorted);
-	out["albums"] = _to_typed_array(albums);
-	out["artists"] = _to_typed_array(artists);
-	return out;
-}
-
-// ====================================================================
-// Incremental updates
-// ====================================================================
-
-// True when the file at p_path no longer matches the record we hold for it,
-// using only cheap filesystem stamps (no tag parsing). Shared by
-// refresh_music_library and plan_music_library_update so both agree.
-// p_known_mtime / p_known_size are stamps the caller already has (from
-// scan_directories); a size of -1 means unknown, so the file is stat()ed.
-static bool _record_needs_reread(const Ref<TagLibMusicRecord> &p_old, const String &p_path,
-		bool p_force, bool p_follow, int64_t p_known_mtime = 0, int64_t p_known_size = -1) {
-	if (p_force) {
-		return true;
-	}
-	if (!p_follow) {
-		return false;
-	}
-	int64_t mtime = p_known_mtime;
-	int64_t size = p_known_size;
-	if (size < 0) {
-		String g = ProjectSettings::get_singleton()->globalize_path(p_path);
-		_file_stamp(g, mtime, size);
-	}
-	bool mtime_changed = p_old->get_file_mtime() != 0 && mtime != 0 &&
-			p_old->get_file_mtime() != mtime;
-	bool size_changed = p_old->get_file_size() >= 0 && size >= 0 &&
-			p_old->get_file_size() != size;
-	return mtime_changed || size_changed;
-}
-
-static Dictionary _index_records_by_path(const Array &p_records) {
-	Dictionary by_path;
-	for (int i = 0; i < p_records.size(); i++) {
-		Ref<TagLibMusicRecord> r = p_records[i];
-		if (r.is_valid() && !r->get_full_path().is_empty()) {
-			by_path[r->get_full_path()] = r;
-		}
-	}
-	return by_path;
-}
-
-static PackedStringArray _removed_paths(const Dictionary &p_prev_by_path, const Dictionary &p_seen) {
-	PackedStringArray removed;
-	Array prev_paths = p_prev_by_path.keys();
-	for (int i = 0; i < prev_paths.size(); i++) {
-		String pp = prev_paths[i];
-		if (!p_seen.has(pp)) {
-			removed.push_back(pp);
-		}
-	}
-	return removed;
-}
-
-Dictionary GDTagLib::plan_music_library_update(
-		const Array &p_previous_records,
-		const PackedStringArray &p_current_paths,
+TypedArray<TagLibMusicRecord> GDTagLib::build_music_records(
+		const PackedStringArray &p_paths,
+		const Callable &p_progress,
 		const Dictionary &p_opts) {
-	bool force_reread = (bool)p_opts.get("force_reread", false);
-	bool follow_retags = (bool)p_opts.get("follow_retags", true);
-
-	// Stamps from scan_directories, only trusted when they line up 1:1.
-	PackedInt64Array known_mtimes = p_opts.get("mtimes", PackedInt64Array());
-	PackedInt64Array known_sizes = p_opts.get("sizes", PackedInt64Array());
-	bool have_stamps = known_mtimes.size() == p_current_paths.size() &&
-			known_sizes.size() == p_current_paths.size();
-
-	Dictionary prev_by_path = _index_records_by_path(p_previous_records);
-
-	Dictionary seen;
-	PackedStringArray added;
-	PackedStringArray changed;
-
-	for (int i = 0; i < p_current_paths.size(); i++) {
-		const String &path = p_current_paths[i];
-		if (path.is_empty() || seen.has(path)) {
-			continue;
-		}
-		seen[path] = true;
-		if (!prev_by_path.has(path)) {
-			added.push_back(path);
-			continue;
-		}
-		Ref<TagLibMusicRecord> old = prev_by_path[path];
-		bool reread = have_stamps
-				? _record_needs_reread(old, path, force_reread, follow_retags, known_mtimes[i], known_sizes[i])
-				: _record_needs_reread(old, path, force_reread, follow_retags);
-		if (reread) {
-			changed.push_back(path);
-		}
+	TypedArray<TagLibMusicRecord> out;
+	std::vector<TagFields> fields;
+	if (!gdtaglib_read_fields(p_paths, p_progress, p_opts, fields)) {
+		return out;
 	}
-
-	PackedStringArray removed = _removed_paths(prev_by_path, seen);
-
-	Dictionary out;
-	out["added"] = added;
-	out["changed"] = changed;
-	out["removed"] = removed;
-
-	GDTagLib *s = get_singleton();
-	if (s) {
-		// Deferred so a caller on a worker thread still delivers on the main one.
-		s->call_deferred(SNAME("emit_signal"), SNAME("library_update_planned"),
-				added.size(), changed.size(), removed.size());
+	out.resize(p_paths.size());
+	for (int i = 0; i < p_paths.size(); i++) {
+		Ref<TagLibMusicRecord> rec;
+		rec.instantiate();
+		tl_apply_fields(rec.ptr(), p_paths[i], fields[i]);
+		out.set(i, rec);
 	}
-	return out;
-}
-
-Dictionary GDTagLib::refresh_music_library(
-		const Array &p_previous_records,
-		const PackedStringArray &p_current_paths,
-		const Dictionary &p_opts) {
-	bool force_reread = (bool)p_opts.get("force_reread", false);
-	bool follow_retags = (bool)p_opts.get("follow_retags", true);
-
-	Dictionary prev_by_path = _index_records_by_path(p_previous_records);
-
-	Dictionary seen;
-	PackedStringArray added;
-	PackedStringArray rescanned;
-	std::vector<Ref<TagLibMusicRecord>> records;
-
-	for (int i = 0; i < p_current_paths.size(); i++) {
-		const String &path = p_current_paths[i];
-		if (path.is_empty() || seen.has(path)) {
-			continue;
-		}
-		seen[path] = true;
-
-		if (!prev_by_path.has(path)) {
-			records.push_back(_build_music_record(path));
-			added.push_back(path);
-			continue;
-		}
-
-		Ref<TagLibMusicRecord> old = prev_by_path[path];
-		if (_record_needs_reread(old, path, force_reread, follow_retags)) {
-			Ref<TagLibMusicRecord> fresh = _build_music_record(path);
-			// Play counts aren't in the tags, so a re-read must not reset them.
-			fresh->set_listen_count(old->get_listen_count());
-			records.push_back(fresh);
-			rescanned.push_back(path);
-		} else {
-			records.push_back(old);
-		}
-	}
-
-	Dictionary out = _assemble_library(records);
-	out["added"] = added;
-	out["removed"] = _removed_paths(prev_by_path, seen);
-	out["rescanned"] = rescanned;
 	return out;
 }

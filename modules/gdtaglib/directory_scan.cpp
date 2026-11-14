@@ -174,7 +174,7 @@ void _scan_dir(ScanState &s, const String &p_fs_path, const String &p_out_path) 
 		}
 		int group = s.group_of(entry.name);
 		if (group >= 0) {
-			// Stamps unknown here; plan_music_library_update stats instead.
+			// Stamps unknown here; TagLibLibrary.plan_update stats instead.
 			s.add_file(group, out_child, 0, -1);
 		}
 	}

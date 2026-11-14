@@ -189,6 +189,14 @@ if profile:
 
 opts = Variables(customs, ARGUMENTS)
 
+# Values set in custom.py / the profile, so platform flags below don't
+# override them (Variables reads these files the same way).
+custom_args = {}
+for custom in customs:
+    if os.path.isfile(custom):
+        with open(custom, "r", encoding="utf-8") as f:
+            exec(f.read(), {}, custom_args)
+
 # Target build options
 if env.scons_version >= (4, 3):
     opts.Add(["platform", "p"], "Target platform (%s)" % "|".join(platform_list), "")
@@ -383,7 +391,9 @@ if env["platform"] in platform_opts:
 # as early as possible to ensure that we're using the correct values.
 flag_list = platform_flags[env["platform"]]
 for key, value in flag_list.items():
-    if key not in ARGUMENTS or ARGUMENTS[key] == "auto":  # Allow command line to override platform flags
+    # Allow the command line, then custom.py / the profile, to override platform flags.
+    user_value = ARGUMENTS.get(key, custom_args.get(key))
+    if user_value is None or user_value == "auto":
         env[key] = value
 
 # Update the environment to take platform-specific options into account.

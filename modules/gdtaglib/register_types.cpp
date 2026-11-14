@@ -11,10 +11,13 @@ void initialize_gdtaglib_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
-	// Records first: GDTagLib and the album/artist records reference them.
+	// Records first: the library and GDTagLib reference them.
 	GDREGISTER_CLASS(TagLibMusicRecord);
+	GDREGISTER_ABSTRACT_CLASS(TagLibTrackGroup);
 	GDREGISTER_CLASS(TagLibAlbumRecord);
 	GDREGISTER_CLASS(TagLibArtistRecord);
+	GDREGISTER_CLASS(TagLibTrackList);
+	GDREGISTER_CLASS(TagLibLibrary);
 	GDREGISTER_CLASS(GDTagLib);
 
 	gdtaglib_singleton = memnew(GDTagLib);
