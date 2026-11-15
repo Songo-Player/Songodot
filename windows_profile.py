@@ -2,9 +2,8 @@
 # with MinGW-w64. The modules and trimmed classes match sbc_profile.py; keep
 # the two in sync when Songo's needs change.
 #
-# Usage (docker_build/build_windows.sh has the toolchain):
-#   docker_build/build_windows.sh
-#   scons profile=windows_profile.py -j 16      (with MinGW-w64 installed)
+# Usage, with MinGW-w64 (posix threads) installed; SongoDevKit has it in Docker:
+#   scons profile=windows_profile.py -j 16
 #
 # Any option given on the command line overrides the value here, e.g.:
 #   scons profile=windows_profile.py target=template_debug -j 16
