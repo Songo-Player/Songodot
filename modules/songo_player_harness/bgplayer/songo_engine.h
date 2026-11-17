@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define SONGO_ENGINE_API_VERSION 1
+#define SONGO_ENGINE_API_VERSION 2
 
 typedef struct SongoEngine SongoEngine;
 typedef struct SongoSubscription SongoSubscription;
@@ -120,8 +120,12 @@ SONGO_API void songo_engine_previous(SongoEngine *engine);
 
 // Linear gain, 0 to 1
 SONGO_API void songo_engine_set_volume(SongoEngine *engine, float volume);
-// Songo's EQ: Godot's AudioEffectEQ10, gains in dB per band
+// Songo's EQ: 10 bands (31 Hz to 16 kHz), gains in dB per band. Off and all bands at 0 dB sound the same
 SONGO_API void songo_engine_set_eq(SongoEngine *engine, int enabled, const float *gains_db, int count);
+// The EQ's level after its bands, only while it's on. Auto preamp lowers it by
+// the largest boost the bands make so boosts don't clip; output_gain_db is added
+// on top. Starts as auto preamp on, 0 dB.
+SONGO_API void songo_engine_set_eq_output(SongoEngine *engine, int auto_preamp, float output_gain_db);
 // Crossfade length between songs, 0 plays them back to back
 SONGO_API void songo_engine_set_blend(SongoEngine *engine, double seconds);
 SONGO_API void songo_engine_set_repeat_one(SongoEngine *engine, int enabled);

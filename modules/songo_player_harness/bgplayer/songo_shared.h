@@ -27,7 +27,7 @@ namespace songo {
 
 constexpr uint32_t SHARED_MAGIC = 0x534f4e47; // "SONG"
 // Bump on any layout change, readers refuse a block with another version
-constexpr uint32_t SHARED_VERSION = 1;
+constexpr uint32_t SHARED_VERSION = 2;
 
 // Bins per channel, as AudioEffectSpectrumAnalyzer's default FFT_SIZE_1024.
 // Each spectrum frame analyses twice this many audio frames.
@@ -46,6 +46,7 @@ enum StatusFlags : uint32_t {
 	STATUS_REPEAT_ONE = 1 << 2,
 	STATUS_LOOP_QUEUE = 1 << 3,
 	STATUS_EQ_ENABLED = 1 << 4,
+	STATUS_EQ_AUTO_PREAMP = 1 << 5,
 };
 
 struct Status {
@@ -64,6 +65,7 @@ struct Status {
 	double blend_seconds;
 	float volume;
 	float eq_gains_db[EQ_BANDS];
+	float eq_output_gain_db;
 };
 
 struct SpectrumFrame {

@@ -65,6 +65,8 @@ private:
 	bool loop_queue = false;
 	bool eq_enabled = false;
 	PackedFloat32Array eq_band_gains;
+	bool eq_auto_preamp = true;
+	float eq_output_gain_db = 0.0f;
 	double network_timeout = 10.0;
 	String user_agent;
 	bool skip_failed = true;
@@ -147,6 +149,10 @@ public:
 	bool get_eq_enabled() const;
 	void set_eq_band_gains(const PackedFloat32Array &p_gains_db);
 	PackedFloat32Array get_eq_band_gains() const;
+	void set_eq_auto_preamp(bool p_enabled);
+	bool get_eq_auto_preamp() const;
+	void set_eq_output_gain_db(float p_gain_db);
+	float get_eq_output_gain_db() const;
 	void set_network_timeout(double p_seconds);
 	double get_network_timeout() const;
 	void set_user_agent(const String &p_user_agent);

@@ -100,6 +100,10 @@ void SongoPlayerHarness::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_eq_enabled"), &SongoPlayerHarness::get_eq_enabled);
 	ClassDB::bind_method(D_METHOD("set_eq_band_gains", "gains_db"), &SongoPlayerHarness::set_eq_band_gains);
 	ClassDB::bind_method(D_METHOD("get_eq_band_gains"), &SongoPlayerHarness::get_eq_band_gains);
+	ClassDB::bind_method(D_METHOD("set_eq_auto_preamp", "enabled"), &SongoPlayerHarness::set_eq_auto_preamp);
+	ClassDB::bind_method(D_METHOD("get_eq_auto_preamp"), &SongoPlayerHarness::get_eq_auto_preamp);
+	ClassDB::bind_method(D_METHOD("set_eq_output_gain_db", "gain_db"), &SongoPlayerHarness::set_eq_output_gain_db);
+	ClassDB::bind_method(D_METHOD("get_eq_output_gain_db"), &SongoPlayerHarness::get_eq_output_gain_db);
 	ClassDB::bind_method(D_METHOD("set_network_timeout", "seconds"), &SongoPlayerHarness::set_network_timeout);
 	ClassDB::bind_method(D_METHOD("get_network_timeout"), &SongoPlayerHarness::get_network_timeout);
 	ClassDB::bind_method(D_METHOD("set_user_agent", "user_agent"), &SongoPlayerHarness::set_user_agent);
@@ -134,6 +138,10 @@ void SongoPlayerHarness::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "loop_queue"), "set_loop_queue", "get_loop_queue");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "eq_enabled"), "set_eq_enabled", "get_eq_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "eq_band_gains"), "set_eq_band_gains", "get_eq_band_gains");
+	// The EQ's level after its bands: auto preamp takes off the largest boost
+	// so boosts don't clip, and the output gain is added on top
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "eq_auto_preamp"), "set_eq_auto_preamp", "get_eq_auto_preamp");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "eq_output_gain_db", PROPERTY_HINT_RANGE, "-24,24,0.5"), "set_eq_output_gain_db", "get_eq_output_gain_db");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "network_timeout", PROPERTY_HINT_RANGE, "1,120,0.5,suffix:s"), "set_network_timeout", "get_network_timeout");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "user_agent"), "set_user_agent", "get_user_agent");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "skip_failed"), "set_skip_failed", "get_skip_failed");
@@ -632,6 +640,26 @@ PackedFloat32Array SongoPlayerHarness::get_eq_band_gains() const {
 		gains.push_back(status.eq_gains_db[band]);
 	}
 	return gains;
+}
+
+void SongoPlayerHarness::set_eq_auto_preamp(bool p_enabled) {
+	eq_auto_preamp = p_enabled;
+	_send_setting(songo::Message("eq_output").add(eq_auto_preamp ? 1 : 0).add((double)eq_output_gain_db));
+}
+
+bool SongoPlayerHarness::get_eq_auto_preamp() const {
+	songo::Status status;
+	return _read_status(status) ? (status.flags & songo::STATUS_EQ_AUTO_PREAMP) != 0 : eq_auto_preamp;
+}
+
+void SongoPlayerHarness::set_eq_output_gain_db(float p_gain_db) {
+	eq_output_gain_db = p_gain_db;
+	set_eq_auto_preamp(eq_auto_preamp);
+}
+
+float SongoPlayerHarness::get_eq_output_gain_db() const {
+	songo::Status status;
+	return _read_status(status) ? status.eq_output_gain_db : eq_output_gain_db;
 }
 
 void SongoPlayerHarness::set_network_timeout(double p_seconds) {

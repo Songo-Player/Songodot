@@ -18,6 +18,7 @@
 //   seek <seconds>
 //   volume <0-1>
 //   eq <enabled 0|1> <dB>...          (up to 10 bands)
+//   eq_output <auto_preamp 0|1> <dB>  (EQ level after the bands)
 //   blend <seconds>
 //   repeat_one <0|1>
 //   loop_queue <0|1>
@@ -49,7 +50,7 @@
 
 namespace songo {
 
-constexpr int PROTOCOL_VERSION = 1;
+constexpr int PROTOCOL_VERSION = 2;
 
 struct Message {
 	std::vector<std::string> fields;

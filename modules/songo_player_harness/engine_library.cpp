@@ -80,6 +80,7 @@ bool resolve_api(void *p_library, EngineApi &r_api, std::string &r_missing) {
 	SONGO_RESOLVE(previous, songo_engine_previous)
 	SONGO_RESOLVE(set_volume, songo_engine_set_volume)
 	SONGO_RESOLVE(set_eq, songo_engine_set_eq)
+	SONGO_RESOLVE(set_eq_output, songo_engine_set_eq_output)
 	SONGO_RESOLVE(set_blend, songo_engine_set_blend)
 	SONGO_RESOLVE(set_repeat_one, songo_engine_set_repeat_one)
 	SONGO_RESOLVE(set_loop_queue, songo_engine_set_loop_queue)
@@ -176,6 +177,8 @@ bool dispatch_command(const EngineApi &api, SongoEngine *engine, const Message &
 			gains.push_back((float)m.arg_double(i));
 		}
 		api.set_eq(engine, m.arg_int(0), gains.data(), (int)gains.size());
+	} else if (name == "eq_output") {
+		api.set_eq_output(engine, m.arg_int(0), (float)m.arg_double(1));
 	} else if (name == "blend") {
 		api.set_blend(engine, m.arg_double(0));
 	} else if (name == "repeat_one") {

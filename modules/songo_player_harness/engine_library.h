@@ -36,6 +36,7 @@ struct EngineApi {
 
 	void (*set_volume)(SongoEngine *engine, float volume);
 	void (*set_eq)(SongoEngine *engine, int enabled, const float *gains_db, int count);
+	void (*set_eq_output)(SongoEngine *engine, int auto_preamp, float output_gain_db);
 	void (*set_blend)(SongoEngine *engine, double seconds);
 	void (*set_repeat_one)(SongoEngine *engine, int enabled);
 	void (*set_loop_queue)(SongoEngine *engine, int enabled);
