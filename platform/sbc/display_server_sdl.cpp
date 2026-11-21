@@ -224,6 +224,25 @@ DisplayServerSDL::DisplayServerSDL(const String &p_rendering_driver, WindowMode 
 	}
 #endif
 
+	// Touch follows the renderer's rotation, except on GLES3 over KMSDRM: the output
+	// isn't rotated there, but a panel whose touch controller reports rotated still
+	// needs its touches turned, so SONGODOT_KMSDRM_ROTATION applies to touch alone.
+	touch_rotation = screen_rotation;
+#ifdef GLES3_ENABLED
+	if (rendering_driver == "opengl3" && is_kmsdrm) {
+		const char *rotation_env = getenv("SONGODOT_KMSDRM_ROTATION");
+		if (rotation_env) {
+			int degrees = atoi(rotation_env);
+			if (degrees == 0 || degrees == 90 || degrees == 180 || degrees == 270) {
+				touch_rotation = degrees / 90;
+				print_line("KMSDRM: rotating touch input " + itos(degrees) + " degrees (SONGODOT_KMSDRM_ROTATION)");
+			} else {
+				WARN_PRINT("KMSDRM: ignoring invalid SONGODOT_KMSDRM_ROTATION=" + String(rotation_env));
+			}
+		}
+	}
+#endif
+
 	// SDL's KMSDRM backend creates a hardware cursor (a DRM cursor plane) for every
 	// non-Vulkan window and shows it at <0, 0> by default. Handhelds have no pointer,
 	// so start hidden; projects can opt back in with Input.mouse_mode = MOUSE_MODE_VISIBLE.
@@ -968,11 +987,12 @@ void DisplayServerSDL::_process_sdl_text_input(const SDL_TextInputEvent &text_ev
 
 // Converts SDL's normalized (0-1) touch coordinates, which are in the panel's native
 // orientation, into window pixels in the (possibly rotated) logical orientation.
-// This undoes the renderer's screen rotation: logical (u, v) is shown at
-// (1 - v, u) for 90 degrees, (1 - u, 1 - v) for 180 and (v, 1 - u) for 270.
+// This undoes touch_rotation (the renderer's screen rotation, or the KMSDRM override
+// on GLES3): logical (u, v) is at (1 - v, u) for 90 degrees, (1 - u, 1 - v) for 180
+// and (v, 1 - u) for 270.
 Vector2 DisplayServerSDL::_touch_to_window(float p_x, float p_y, bool p_is_delta) const {
 	Vector2 n;
-	switch (screen_rotation) {
+	switch (touch_rotation) {
 		case 1:
 			n = p_is_delta ? Vector2(p_y, -p_x) : Vector2(p_y, 1.0 - p_x);
 			break;

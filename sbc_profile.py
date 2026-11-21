@@ -20,7 +20,8 @@ use_llvm = "yes"
 progress = "yes"
 
 # --- Renderers ---------------------------------------------------------------
-vulkan = "yes"
+# Vulkan is off: every SBC device runs Compatibility on GLES3.
+vulkan = "no"
 opengl3 = "yes"
 
 # --- Size ----------------------------------------------------------------------
@@ -31,7 +32,7 @@ debug_symbols = "no"
 lto = "full"
 
 deprecated = "no"  # Compat code for removed APIs; project and GDExtensions target 4.3.
-minizip = "no"  # ZIPReader/ZIPPacker and .zip resource packs; themes/plugins use .pck.
+minizip = "yes"  # ZIPReader: the Theme Downloader plugin unzips themes it downloads.
 # Keep Brotli: it's needed to decode WOFF2 fonts, and Godot's built-in fallback
 # font (used by any control a theme doesn't give a font, e.g. LineEdit) is WOFF2.
 brotli = "yes"
@@ -55,7 +56,7 @@ build_profile = "sbc.build"
 modules_enabled_by_default = "no"
 
 module_gdscript_enabled = "yes"
-module_glslang_enabled = "yes"  # Required by the Vulkan renderer to compile shaders.
+# glslang is only needed by the Vulkan renderer, which is disabled above.
 
 # Text/fonts.
 module_freetype_enabled = "yes"
@@ -79,6 +80,7 @@ module_minimp3_enabled = "yes"
 # Networking/misc.
 module_mbedtls_enabled = "yes"  # HTTPS (lrclib lyrics, network status check).
 module_regex_enabled = "yes"
+module_zip_enabled = "yes"  # ZIPReader, for the Theme Downloader plugin (needs minizip).
 module_noise_enabled = "yes"  # FastNoiseLite/NoiseTexture2D in the Noted theme.
 
 # Music library: tag reading, directory scans, cover art (GDTagLib class).

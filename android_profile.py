@@ -43,7 +43,7 @@ ccflags = "-fdata-sections"
 linkflags = "-Wl,--icf=all"
 
 deprecated = "no"  # Compat code for removed APIs; project and GDExtensions target 4.3.
-minizip = "no"  # ZIPReader/ZIPPacker and .zip resource packs; themes/plugins use .pck.
+minizip = "yes"  # ZIPReader: the Theme Downloader plugin unzips themes it downloads.
 # Keep Brotli: it's needed to decode WOFF2 fonts, and Godot's built-in fallback
 # font (used by any control a theme doesn't give a font, e.g. LineEdit) is WOFF2.
 brotli = "yes"
@@ -89,6 +89,7 @@ module_minimp3_enabled = "yes"
 # Networking/misc.
 module_mbedtls_enabled = "yes"  # HTTPS (lrclib lyrics, network status check).
 module_regex_enabled = "yes"
+module_zip_enabled = "yes"  # ZIPReader, for the Theme Downloader plugin (needs minizip).
 module_noise_enabled = "yes"  # FastNoiseLite/NoiseTexture2D in the Noted theme.
 
 # Music library: tag reading, directory scans, cover art (GDTagLib class).

@@ -43,8 +43,12 @@ private:
 	Vector2 last_mouse_pos = Vector2();
 	MouseMode mouse_mode = MOUSE_MODE_HIDDEN;
 	// Clockwise quarter turns the renderer applies to the output (see RendererCompositorRD::screen_rotation).
-	// SDL reports touches in the panel's native orientation, so they're rotated back by this.
 	int screen_rotation = 0;
+	// Clockwise quarter turns SDL's touches are rotated back by in _touch_to_window. Follows
+	// screen_rotation under Vulkan. On GLES3 over KMSDRM, the renderer doesn't rotate, but
+	// some panels' touch controllers still report in a rotated orientation, so it comes from
+	// SONGODOT_KMSDRM_ROTATION instead.
+	int touch_rotation = 0;
 
 	Vector2 _touch_to_window(float p_x, float p_y, bool p_is_delta) const;
 	std::set<SDL_JoystickID> gamecontroller_ids; // IDs managed by SDL_GameController
